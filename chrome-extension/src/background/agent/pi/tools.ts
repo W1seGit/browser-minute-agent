@@ -140,23 +140,16 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
     createTool(
       'input_text',
       'input_text',
-      'Input the full text into an interactive input, editor, IDE, or contenteditable element in one action. Prefer this over clicking first when the target element is already known.',
+      'Type the full text into the currently focused element (the element that has keyboard focus). You MUST click the target element first with click_element to establish focus before using this tool. Do NOT use this for special keys like Enter or Backspace — use send_keys for those.',
       Type.Object({
         intent: optionalIntent,
-        index: Type.Number({ description: 'index of the element' }),
-        text: Type.String({ description: 'text to input' }),
-        xpath: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'xpath of the element' })),
+        text: Type.String({ description: 'text to type into the focused element' }),
       }),
       async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
         void params.intent;
         const page = await context.browserContext.getCurrentPage();
-        const state = await page.getState();
-        const elementNode = state?.selectorMap.get(params.index);
-        if (!elementNode) {
-          throw new Error(t('act_errors_elementNotExist', [params.index.toString()]));
-        }
-        await page.inputTextElementNode(context.options.useVision, elementNode, params.text);
-        const msg = t('act_inputText_ok', [params.text, params.index.toString()]);
+        await page.typeText(params.text);
+        const msg = `Typed: ${params.text}`;
         return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
       },
     ),
@@ -219,7 +212,6 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
       }),
       async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
         void params.intent;
-        const msg = t('act_cache_ok', [params.content]);
         return buildResult(new ActionResult({ extractedContent: params.content, includeInMemory: true }));
       },
     ),

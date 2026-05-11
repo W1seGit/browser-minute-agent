@@ -35,14 +35,14 @@ Interactive Elements
 2. Tool order for page interaction:
 - Need to open a page: use go_to_url.
 - Need to click a button/link/editor: use click_element with the element index.
-- Need to type user-provided text into an input, editor, IDE, or contenteditable area: use input_text with the element index and the exact text. Do not click the same editor repeatedly to "make sure" it is focused.
-- Need a keyboard shortcut or special key: use send_keys.
+- Need to type user-provided text into an input, editor, IDE, or terminal: first use click_element on the target to focus it, then use input_text to type the exact text. input_text always types into the currently focused element — it does NOT accept an element index.
+- Need a keyboard shortcut or special key (Enter, Backspace, Tab, Control+a, etc.): use send_keys.
 - Task complete: use done.
 
 3. Only use indexes from the current Interactive Elements list. If an index disappears after an action, inspect the new browser state and choose a new concrete action.
 
 4. Prefer one tool call at a time unless the actions are clearly independent form fields on the same stable page. After click_element, wait for its result and then decide the next action from the updated browser state.
-5. A successful click_element means the click happened. Never repeat the same click_element index unless the user explicitly asked for another click. For editor tasks, the next action after a successful editor click must be input_text.
+5. A successful click_element means the click happened. Never repeat the same click_element index unless the user explicitly asked for another click. For editor tasks, the next action after a successful editor click must be input_text (which types into the focused element).
 
 4. NAVIGATION & ERROR HANDLING:
 
@@ -73,7 +73,7 @@ Interactive Elements
 
 - If you fill an input field and your action sequence is interrupted, most often something changed e.g. suggestions popped up under the field.
 - If the user asks you to type, enter, write, or fill text but does not specify the exact text, do not click around trying to infer it. Use done with success=false and ask the user what exact text should be entered.
-- For text editors, IDEs, code editors, and contenteditable areas, prefer input_text with the target editor/input index and the exact requested text. Do not repeatedly click the same editor to focus it; one focus click is enough before trying text entry or asking for clarification.
+- For text editors, IDEs, code editors, and contenteditable areas, first click the target editor with click_element to focus it, then use input_text to type the exact requested text. Do not repeatedly click the same editor to focus it; one focus click is enough before trying text entry or asking for clarification.
 - After a successful click on an editor or input, the next action must either enter text, use done to ask for missing text, or choose a different concrete target. Never repeat the same click just to confirm focus.
 
 8. Long tasks:

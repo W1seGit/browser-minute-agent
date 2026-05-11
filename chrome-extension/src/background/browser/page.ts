@@ -758,6 +758,24 @@ export default class Page {
     }
   }
 
+  /**
+   * Type text into the currently focused element (document.activeElement).
+   * The caller must ensure the target is focused first (e.g. via click_element).
+   */
+  async typeText(text: string): Promise<void> {
+    if (!this._puppeteerPage) {
+      throw new Error('Puppeteer page is not connected');
+    }
+    try {
+      await this._puppeteerPage.keyboard.type(text, { delay: 0 });
+      await this.waitForPageAndFramesLoad();
+      logger.info('typeText complete', text.slice(0, 50));
+    } catch (error) {
+      logger.error('Failed to type text:', error);
+      throw new Error(`Failed to type text: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   private _convertKey(key: string): KeyInput {
     const lowerKey = key.trim().toLowerCase();
     const isMac = navigator.userAgent.toLowerCase().includes('mac os x');
