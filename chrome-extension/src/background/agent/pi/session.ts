@@ -433,16 +433,45 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
     if (signal?.aborted) return messages;
 
     try {
-      const browserState = await browserContext.getState(useVision);
+      // Enable element-change tracking so isNew markers are computed
+      const browserState = await browserContext.getState(useVision, true);
       const elementsText = browserState.elementTree.clickableElementsToString(context.options.includeAttributes);
       const tabsInfo = browserState.tabs.map(tab => `Tab ${tab.id}: ${tab.url}`).join('\n');
+
+      // Surface recent tool results prominently so the model cannot miss what it already did
+      const recentActions = messages
+        .filter((m): m is AgentMessage & { role: 'toolResult'; toolName: string; isError: boolean; content: Array<{ type: string; text?: string }> } => {
+          if (m.role !== 'toolResult') return false;
+          const record = m as unknown as Record<string, unknown>;
+          const content = Array.isArray(record.content) ? record.content : [];
+          return content.some((c: unknown) => {
+            const item = c as Record<string, unknown>;
+            return c && typeof c === 'object' && item.type === 'text';
+          });
+        })
+        .slice(-10)
+        .map(m => {
+          const text = m.content
+            .filter((c): c is { type: 'text'; text: string } => c.type === 'text' && typeof c.text === 'string')
+            .map(c => c.text)
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          const shortText = text.length > 200 ? text.slice(0, 200) + '...' : text;
+          return `- ${m.toolName}${m.isError ? ' (error)' : ''}: ${shortText}`;
+        })
+        .join('\n');
+
+      const recentActionsSection = recentActions.length > 0
+        ? `\n\nRecent actions (do not repeat):\n${recentActions}`
+        : '';
 
       const stateMessage = {
         role: 'user' as const,
         content: [
           {
             type: 'text' as const,
-            text: `Current browser state:\n\nURL: ${browserState.url}\nTitle: ${browserState.title}\n\nTabs:\n${tabsInfo}\n\nInteractive elements:\n${elementsText}`,
+            text: `Current browser state:\n\nURL: ${browserState.url}\nTitle: ${browserState.title}\n\nTabs:\n${tabsInfo}${recentActionsSection}\n\nInteractive elements:\n${elementsText}`,
           },
         ],
         timestamp: Date.now(),
