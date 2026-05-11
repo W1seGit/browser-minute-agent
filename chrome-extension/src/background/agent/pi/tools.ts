@@ -1,6 +1,7 @@
 import { Type, type TSchema, type Static } from 'typebox';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { ActionResult, type AgentContext } from '../types';
+import { Actors, ExecutionState } from '../event/types';
 import { createLogger } from '@src/background/log';
 import { t } from '@extension/i18n';
 
@@ -45,6 +46,9 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         success: Type.Optional(Type.Boolean({ default: true })),
       }),
       async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
+        if (params.text) {
+          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.STREAM_TEXT, params.text);
+        }
         context.finalAnswer = params.text;
         const result = new ActionResult({ isDone: true, success: params.success, extractedContent: params.text });
         if (ctx.onDone) {

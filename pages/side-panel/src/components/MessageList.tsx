@@ -1,7 +1,7 @@
 import type { Message as StorageMessage } from '@extension/storage';
 import { ACTOR_PROFILES } from '../types/message';
 import { memo } from 'react';
-import { FiActivity, FiAlertTriangle, FiCheck, FiClipboard, FiCompass, FiCpu, FiEdit3, FiLoader } from 'react-icons/fi';
+import { FiActivity, FiAlertTriangle, FiCheck, FiCompass, FiCpu, FiLoader } from 'react-icons/fi';
 import { Message as PromptMessage, MessageContent } from './prompt-kit/message';
 import {
   ChainOfThought,
@@ -22,15 +22,12 @@ export default memo(function MessageList({ messages }: MessageListProps) {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-3 py-5">
       {items.map((item, index) => {
-        if (item.type === 'tools') {
-          return <ToolCallChain key={`tools-${item.calls[0]?.timestamp}-${index}`} calls={item.calls} />;
-        }
-        if (item.type === 'reasoning') {
+        if (item.type === 'trace') {
           return (
-            <ReasoningBlock
-              key={`reasoning-${item.message.timestamp}-${index}`}
-              text={item.text}
-              timestamp={item.message.timestamp}
+            <RunTrace
+              key={`trace-${item.steps[0]?.timestamp}-${index}`}
+              steps={item.steps}
+              active={index === items.length - 1}
             />
           );
         }
@@ -108,25 +105,23 @@ type ToolCall = {
   timestamp: number;
 };
 
+type TraceStep =
+  | { type: 'reasoning'; text: string; timestamp: number }
+  | { type: 'tools'; calls: ToolCall[]; timestamp: number };
+
 const TOOL_MESSAGE_PREFIX = '__bma_tool_call__:';
 const REASONING_MESSAGE_PREFIX = '__bma_reasoning__:';
 
-type DisplayItem =
-  | { type: 'message'; message: StorageMessage }
-  | { type: 'tools'; calls: ToolCall[] }
-  | { type: 'reasoning'; message: StorageMessage; text: string };
+type DisplayItem = { type: 'message'; message: StorageMessage } | { type: 'trace'; steps: TraceStep[] };
 
 function buildDisplayItems(messages: StorageMessage[]): DisplayItem[] {
   const items: DisplayItem[] = [];
-  let toolGroup: ToolCall[] = [];
+  let traceSteps: TraceStep[] = [];
 
-  const flushTools = () => {
-    if (toolGroup.length > 0) {
-      const collapsed = collapseToolCalls(toolGroup);
-      if (collapsed.length > 0) {
-        items.push({ type: 'tools', calls: collapsed });
-      }
-      toolGroup = [];
+  const flushTrace = () => {
+    if (traceSteps.length > 0) {
+      items.push({ type: 'trace', steps: traceSteps });
+      traceSteps = [];
     }
   };
 
@@ -135,23 +130,28 @@ function buildDisplayItems(messages: StorageMessage[]): DisplayItem[] {
 
     if (toolCall) {
       if (toolCall.name !== 'done' && toolCall.name !== 'browser_action') {
-        toolGroup.push(toolCall);
+        const lastStep = traceSteps[traceSteps.length - 1];
+        if (lastStep?.type === 'tools') {
+          lastStep.calls = collapseToolCalls([...lastStep.calls, toolCall]);
+          lastStep.timestamp = toolCall.timestamp;
+        } else {
+          traceSteps.push({ type: 'tools', calls: [toolCall], timestamp: toolCall.timestamp });
+        }
       }
       return;
     }
 
     const reasoningText = message.actor !== 'user' ? parseReasoningMessage(message.content) : null;
     if (reasoningText !== null) {
-      flushTools();
-      items.push({ type: 'reasoning', message, text: reasoningText });
+      traceSteps.push({ type: 'reasoning', text: reasoningText, timestamp: message.timestamp });
       return;
     }
 
-    flushTools();
+    flushTrace();
     items.push({ type: 'message', message });
   });
 
-  flushTools();
+  flushTrace();
   return items;
 }
 
@@ -225,35 +225,19 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function ToolCallChain({ calls }: { calls: ToolCall[] }) {
-  if (calls.length === 1 && calls[0].name === 'fill_form_fields') {
-    return <BatchInputPlan call={calls[0]} />;
-  }
-
+function RunTrace({ steps, active }: { steps: TraceStep[]; active: boolean }) {
   return (
     <div className="mx-auto w-full max-w-3xl px-1 py-1">
-      <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase text-zinc-500">
-        <FiCompass className="size-3.5" />
-        Browser actions
-        <span className="ml-auto normal-case text-zinc-600">{formatTimestamp(calls[calls.length - 1].timestamp)}</span>
-      </div>
       <ChainOfThought className="pl-1">
-        {calls.map((call, index) => (
-          <ChainOfThoughtStep key={`${call.name}-${call.timestamp}-${index}`} isLast={index === calls.length - 1}>
-            <ChainOfThoughtTrigger leftIcon={getToolIcon(call)}>
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="truncate">{formatToolName(call.name)}</span>
-                <span className={`shrink-0 text-[11px] ${getToolStatusClass(call.state)}`}>
-                  {getToolStatusLabel(call.state)}
-                </span>
-              </span>
-            </ChainOfThoughtTrigger>
-            {hasToolDetails(call) && (
-              <ChainOfThoughtContent>
-                <ChainOfThoughtItem>
-                  <ToolDetails call={call} />
-                </ChainOfThoughtItem>
-              </ChainOfThoughtContent>
+        {steps.map((step, index) => (
+          <ChainOfThoughtStep
+            key={`${step.type}-${step.timestamp}-${index}`}
+            defaultOpen={isOpenTraceStep(step, index, steps, active)}
+            isLast={index === steps.length - 1}>
+            {step.type === 'reasoning' ? (
+              <ReasoningStep step={step} active={active && index === steps.length - 1} />
+            ) : (
+              <ToolGroupStep calls={step.calls} />
             )}
           </ChainOfThoughtStep>
         ))}
@@ -262,81 +246,116 @@ function ToolCallChain({ calls }: { calls: ToolCall[] }) {
   );
 }
 
+function isOpenTraceStep(step: TraceStep, index: number, steps: TraceStep[], active: boolean) {
+  return active && index === steps.length - 1 && step.type === 'reasoning';
+}
+
+function ReasoningStep({ step, active }: { step: Extract<TraceStep, { type: 'reasoning' }>; active: boolean }) {
+  const tokenEstimate = Math.max(1, Math.ceil(step.text.trim().split(/\s+/).filter(Boolean).length * 1.3));
+  return (
+    <>
+      <ChainOfThoughtTrigger
+        leftIcon={
+          active ? (
+            <FiLoader className="size-3.5 animate-spin text-sky-400" />
+          ) : (
+            <FiCpu className="size-3.5 text-zinc-500" />
+          )
+        }>
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate">Reasoning</span>
+          <span className={`shrink-0 text-[11px] ${active ? 'text-sky-300' : 'text-zinc-500'}`}>
+            ~{tokenEstimate} tokens
+          </span>
+        </span>
+      </ChainOfThoughtTrigger>
+      <ChainOfThoughtContent>
+        <ChainOfThoughtItem>
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5">{step.text}</pre>
+        </ChainOfThoughtItem>
+      </ChainOfThoughtContent>
+    </>
+  );
+}
+
+function ToolGroupStep({ calls }: { calls: ToolCall[] }) {
+  if (calls.length === 1) {
+    return <SingleToolStep call={calls[0]} />;
+  }
+
+  const failed = calls.some(call => call.state === 'output-error');
+  const running = calls.some(call => call.state === 'input-streaming');
+  const completed = calls.filter(call => call.state === 'output-available').length;
+  const label = running
+    ? `Running ${calls.length} actions...`
+    : failed
+      ? `${completed}/${calls.length} actions completed`
+      : `Completed ${calls.length} actions`;
+
+  return (
+    <>
+      <ChainOfThoughtTrigger
+        leftIcon={
+          running ? (
+            <FiLoader className="size-3.5 animate-spin text-sky-400" />
+          ) : (
+            <FiCheck className="size-3.5 text-emerald-400" />
+          )
+        }>
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate">{label}</span>
+          <span
+            className={`shrink-0 text-[11px] ${running ? 'text-sky-300' : failed ? 'text-rose-300' : 'text-emerald-300'}`}>
+            {running ? 'running' : failed ? 'review' : 'done'}
+          </span>
+        </span>
+      </ChainOfThoughtTrigger>
+      <ChainOfThoughtContent>
+        <ChainOfThoughtItem>
+          <div className="space-y-2">
+            {calls.map((call, index) => (
+              <div key={`${call.name}-${call.timestamp}-${index}`} className="flex min-w-0 items-center gap-2 text-sm">
+                {getToolIcon(call)}
+                <span className="truncate text-zinc-200">{formatToolLabel(call)}</span>
+                <span className={`shrink-0 text-[11px] ${getToolStatusClass(call.state)}`}>
+                  {getToolStatusLabel(call.state)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </ChainOfThoughtItem>
+      </ChainOfThoughtContent>
+    </>
+  );
+}
+
+function SingleToolStep({ call }: { call: ToolCall }) {
+  return (
+    <>
+      <ChainOfThoughtTrigger leftIcon={getToolIcon(call)}>
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate">{formatToolLabel(call)}</span>
+          <span className={`shrink-0 text-[11px] ${getToolStatusClass(call.state)}`}>
+            {getToolStatusLabel(call.state)}
+          </span>
+        </span>
+      </ChainOfThoughtTrigger>
+      {hasVisibleToolDetails(call) && (
+        <ChainOfThoughtContent>
+          <ChainOfThoughtItem>
+            <ToolDetails call={call.name === 'fill_form_fields' ? { ...call, input: undefined } : call} />
+          </ChainOfThoughtItem>
+        </ChainOfThoughtContent>
+      )}
+    </>
+  );
+}
+
 type PlannedField = {
   index?: number;
   label?: string;
   text?: string;
 };
-
-function BatchInputPlan({ call }: { call: ToolCall }) {
-  const fields = getPlannedFields(call);
-  const completed = call.state === 'output-available';
-  const failed = call.state === 'output-error';
-
-  return (
-    <div className="mx-auto w-full max-w-3xl px-1 py-1">
-      <div className="overflow-hidden rounded-lg border border-zinc-800 bg-[#111113] shadow-sm shadow-black/20">
-        <div className="flex items-start gap-3 border-b border-zinc-800 px-3 py-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-orange-300/20 bg-orange-300/10 text-orange-200">
-            <FiClipboard className="size-4" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="truncate text-sm font-semibold text-zinc-100">Planned form fill</div>
-              <span className={`shrink-0 text-[11px] ${getToolStatusClass(call.state)}`}>
-                {getToolStatusLabel(call.state)}
-              </span>
-            </div>
-            <div className="mt-0.5 text-xs text-zinc-500">
-              {fields.length} field{fields.length === 1 ? '' : 's'} queued as one batch
-            </div>
-          </div>
-          <div className="text-[11px] text-zinc-600">{formatTimestamp(call.timestamp)}</div>
-        </div>
-
-        {fields.length > 0 && (
-          <div className="divide-y divide-zinc-800/80">
-            {fields.map((field, index) => (
-              <div
-                key={`${field.index ?? index}-${field.label ?? 'field'}`}
-                className="grid grid-cols-[1.5rem_1fr] gap-2 px-3 py-2.5">
-                <span
-                  className={`mt-0.5 flex size-5 items-center justify-center rounded-full border ${
-                    failed
-                      ? 'border-rose-400/30 bg-rose-400/10 text-rose-300'
-                      : completed
-                        ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
-                        : 'border-sky-400/30 bg-sky-400/10 text-sky-300'
-                  }`}>
-                  {completed ? <FiCheck className="size-3" /> : <FiEdit3 className="size-3" />}
-                </span>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm text-zinc-100">
-                      {field.label || `Field ${field.index ?? index + 1}`}
-                    </span>
-                    {field.index !== undefined && (
-                      <span className="shrink-0 rounded border border-zinc-800 bg-zinc-950 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500">
-                        #{field.index}
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-1 truncate font-mono text-xs text-zinc-400">{field.text ?? ''}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {call.errorText && (
-          <div className="border-t border-rose-400/20 bg-rose-400/10 px-3 py-2 text-xs text-rose-100">
-            {call.errorText}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function getPlannedFields(call: ToolCall): PlannedField[] {
   const fields = call.input?.fields;
@@ -351,32 +370,6 @@ function getPlannedFields(call: ToolCall): PlannedField[] {
     }));
 }
 
-function ReasoningBlock({ text, timestamp }: { text: string; timestamp: number }) {
-  const tokenEstimate = Math.max(1, Math.ceil(text.trim().split(/\s+/).filter(Boolean).length * 1.3));
-
-  return (
-    <div className="mx-auto w-full max-w-3xl px-1 py-1">
-      <details className="group overflow-hidden rounded-lg border border-zinc-800 bg-[#0f0f10] shadow-sm shadow-black/20">
-        <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2.5 transition-colors hover:bg-white/[0.04] [&::-webkit-details-marker]:hidden">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-sky-400/20 bg-sky-400/10 text-sky-200">
-            <FiCpu className="size-4" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium text-zinc-100">Reasoning stream</span>
-            <span className="block text-[11px] text-zinc-500">
-              ~{tokenEstimate} tokens · {formatTimestamp(timestamp)}
-            </span>
-          </span>
-          <span className="rounded-full border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400">Open</span>
-        </summary>
-        <pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-zinc-800 bg-black/20 px-3 py-3 font-mono text-xs leading-5 text-zinc-300">
-          {text}
-        </pre>
-      </details>
-    </div>
-  );
-}
-
 function ToolDetails({ call }: { call: ToolCall }) {
   if (call.errorText) return <div className="text-rose-300">{call.errorText}</div>;
 
@@ -384,6 +377,13 @@ function ToolDetails({ call }: { call: ToolCall }) {
   if (!value) return null;
 
   return <pre className="max-h-40 overflow-auto whitespace-pre-wrap font-mono">{JSON.stringify(value, null, 2)}</pre>;
+}
+
+function hasVisibleToolDetails(call: ToolCall) {
+  if (call.name === 'fill_form_fields') {
+    return Boolean(call.output || call.errorText);
+  }
+  return hasToolDetails(call);
 }
 
 function hasToolDetails(call: ToolCall) {
@@ -426,42 +426,11 @@ function formatToolName(name: string) {
     .join(' ');
 }
 
-/**
- * Formats a timestamp (in milliseconds) to a readable time string
- * @param timestamp Unix timestamp in milliseconds
- * @returns Formatted time string
- */
-function formatTimestamp(timestamp: number): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-
-  // Check if the message is from today
-  const isToday = date.toDateString() === now.toDateString();
-
-  // Check if the message is from yesterday
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const isYesterday = date.toDateString() === yesterday.toDateString();
-
-  // Check if the message is from this year
-  const isThisYear = date.getFullYear() === now.getFullYear();
-
-  // Format the time (HH:MM)
-  const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-  if (isToday) {
-    return timeStr; // Just show the time for today's messages
+function formatToolLabel(call: ToolCall) {
+  if (call.name === 'fill_form_fields') {
+    if (call.state === 'input-streaming') return 'Planning form fill...';
+    const fieldCount = getPlannedFields(call).length;
+    return `Filled ${fieldCount} form field${fieldCount === 1 ? '' : 's'}`;
   }
-
-  if (isYesterday) {
-    return `Yesterday, ${timeStr}`;
-  }
-
-  if (isThisYear) {
-    // Show month and day for this year
-    return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${timeStr}`;
-  }
-
-  // Show full date for older messages
-  return `${date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' })}, ${timeStr}`;
+  return formatToolName(call.name);
 }
