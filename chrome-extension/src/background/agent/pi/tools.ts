@@ -155,6 +155,46 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
     ),
 
     createTool(
+      'fill_form_fields',
+      'fill_form_fields',
+      'Fill multiple visible form fields in one planned batch. Use this when several inputs/selectable text fields are visible and you know the values. Build the complete field list first, then call this once instead of alternating click_element and input_text for each field.',
+      Type.Object({
+        intent: optionalIntent,
+        fields: Type.Array(
+          Type.Object({
+            index: Type.Number({ description: 'index of the form field element' }),
+            label: Type.Optional(Type.String({ description: 'human-readable field label' })),
+            text: Type.String({ description: 'text value to enter into the field' }),
+          }),
+          { minItems: 1, description: 'planned field/value pairs to fill' },
+        ),
+      }),
+      async (_toolCallId, params, signal): Promise<AgentToolResult<unknown>> => {
+        void params.intent;
+        const page = await context.browserContext.getCurrentPage();
+        const state = await page.getState();
+        const filled: string[] = [];
+
+        for (const field of params.fields) {
+          if (signal?.aborted) {
+            throw new Error('Fill form fields aborted');
+          }
+
+          const elementNode = state?.selectorMap.get(field.index);
+          if (!elementNode) {
+            throw new Error(t('act_errors_elementNotExist', [field.index.toString()]));
+          }
+
+          await page.inputTextElementNode(context.options.useVision, elementNode, field.text);
+          filled.push(field.label || `Field ${field.index}`);
+        }
+
+        const msg = `Filled ${filled.length} field${filled.length === 1 ? '' : 's'}: ${filled.join(', ')}`;
+        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+      },
+    ),
+
+    createTool(
       'switch_tab',
       'switch_tab',
       'Switch to tab by tab id',

@@ -29,6 +29,7 @@ declare global {
 }
 
 const TOOL_MESSAGE_PREFIX = '__bma_tool_call__:';
+const REASONING_MESSAGE_PREFIX = '__bma_reasoning__:';
 
 type ParsedToolDetails = {
   id?: string;
@@ -79,6 +80,10 @@ function createToolMessageContent(
     errorText: toolState === 'output-error' ? parsed.errorText : undefined,
     rawText: details,
   })}`;
+}
+
+function createReasoningMessageContent(text: string) {
+  return `${REASONING_MESSAGE_PREFIX}${JSON.stringify({ text })}`;
 }
 
 function isDoneAction(details: string) {
@@ -265,9 +270,20 @@ const SidePanel = () => {
         }
 
         if (replaceIndex >= 0) {
+          const existingToolMessage = parseToolMessageContent(filteredMessages[replaceIndex].content);
+          const mergedMessage =
+            existingToolMessage && newToolMessage
+              ? {
+                  ...newMessage,
+                  content: `${TOOL_MESSAGE_PREFIX}${JSON.stringify({
+                    ...newToolMessage,
+                    input: newToolMessage.input ?? existingToolMessage.input,
+                  })}`,
+                }
+              : newMessage;
           return [
             ...filteredMessages.slice(0, replaceIndex),
-            newMessage,
+            mergedMessage,
             ...filteredMessages.slice(replaceIndex + 1),
           ];
         }
@@ -288,15 +304,50 @@ const SidePanel = () => {
     }
   }, []);
 
+  const appendReasoningDelta = useCallback((actor: Actors, delta: string, timestamp: number) => {
+    if (!delta) return;
+
+    setMessages(prev => {
+      const filteredMessages = prev.filter((msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1));
+      const lastMessage = filteredMessages[filteredMessages.length - 1];
+
+      if (lastMessage?.actor === actor && lastMessage.content.startsWith(REASONING_MESSAGE_PREFIX)) {
+        try {
+          const parsed = JSON.parse(lastMessage.content.slice(REASONING_MESSAGE_PREFIX.length)) as { text?: string };
+          return [
+            ...filteredMessages.slice(0, -1),
+            {
+              ...lastMessage,
+              content: createReasoningMessageContent(`${parsed.text ?? ''}${delta}`),
+              timestamp,
+            },
+          ];
+        } catch {
+          return filteredMessages;
+        }
+      }
+
+      return [
+        ...filteredMessages,
+        {
+          actor,
+          content: createReasoningMessageContent(delta),
+          timestamp,
+        },
+      ];
+    });
+  }, []);
+
   const appendStreamDelta = useCallback((actor: Actors, delta: string, timestamp: number) => {
     if (!delta) return;
 
     setMessages(prev => {
       const filteredMessages = prev.filter((msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1));
       const lastMessage = filteredMessages[filteredMessages.length - 1];
-      const previousContent = lastMessage?.actor === actor && lastMessage.content === streamingMessageRef.current
-        ? streamingMessageRef.current
-        : '';
+      const previousContent =
+        lastMessage?.actor === actor && lastMessage.content === streamingMessageRef.current
+          ? streamingMessageRef.current
+          : '';
       const content = previousContent + delta;
       streamingMessageRef.current = content;
 
@@ -466,8 +517,8 @@ const SidePanel = () => {
               }
               return;
             case ExecutionState.STREAM_THINKING:
-              skip = true;
-              break;
+              appendReasoningDelta(actor, content, timestamp);
+              return;
             case ExecutionState.STREAM_TEXT:
               appendStreamDelta(actor, content, timestamp);
               return;

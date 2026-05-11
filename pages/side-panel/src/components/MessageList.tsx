@@ -1,8 +1,8 @@
 import type { Message as StorageMessage } from '@extension/storage';
 import { ACTOR_PROFILES } from '../types/message';
 import { memo } from 'react';
-import { FiActivity, FiAlertTriangle, FiCheck, FiCompass, FiLoader } from 'react-icons/fi';
-import { Message as PromptMessage, MessageAvatar, MessageContent } from './prompt-kit/message';
+import { FiActivity, FiAlertTriangle, FiCheck, FiClipboard, FiCompass, FiCpu, FiEdit3, FiLoader } from 'react-icons/fi';
+import { Message as PromptMessage, MessageContent } from './prompt-kit/message';
 import {
   ChainOfThought,
   ChainOfThoughtContent,
@@ -24,6 +24,15 @@ export default memo(function MessageList({ messages }: MessageListProps) {
       {items.map((item, index) => {
         if (item.type === 'tools') {
           return <ToolCallChain key={`tools-${item.calls[0]?.timestamp}-${index}`} calls={item.calls} />;
+        }
+        if (item.type === 'reasoning') {
+          return (
+            <ReasoningBlock
+              key={`reasoning-${item.message.timestamp}-${index}`}
+              text={item.text}
+              timestamp={item.message.timestamp}
+            />
+          );
         }
 
         const previous = items[index - 1];
@@ -57,12 +66,7 @@ function MessageBlock({ message, isSameActor }: MessageBlockProps) {
 
   return (
     <PromptMessage className={`max-w-full ${isUser ? 'justify-end' : 'justify-start'}`}>
-      {!isUser && !isSameActor && (
-        <MessageAvatar src={actor.icon} alt={actor.name} fallback="AI" className="border border-zinc-800 bg-zinc-950" />
-      )}
-      {!isUser && isSameActor && <div className="w-8 shrink-0" />}
-
-      <div className={`min-w-0 ${isUser ? 'max-w-[84%]' : 'max-w-[calc(100%-2.75rem)] flex-1'}`}>
+      <div className={`min-w-0 ${isUser ? 'max-w-[84%]' : 'w-full flex-1'}`}>
         {!isSameActor && (
           <div
             className={`mb-1 text-[11px] font-medium uppercase text-zinc-500 ${isUser ? 'text-right' : 'text-left'}`}>
@@ -82,16 +86,11 @@ function MessageBlock({ message, isSameActor }: MessageBlockProps) {
             markdown
             className={`bma-markdown border shadow-sm ${
               isUser
-                ? 'bma-markdown-user border-orange-300/30 bg-zinc-100 text-zinc-950'
-                : 'border-zinc-800 bg-[#111113] text-zinc-100'
+                ? 'bma-markdown-user border-orange-300/25 bg-[#2a211b] text-orange-50'
+                : 'border-transparent bg-transparent px-0 py-0 text-zinc-100 shadow-none'
             }`}>
             {message.content}
           </MessageContent>
-        )}
-        {!isProgress && (
-          <div className={`mt-1 text-xs text-zinc-500 ${isUser ? 'text-right' : 'text-left'}`}>
-            {formatTimestamp(message.timestamp)}
-          </div>
         )}
       </div>
     </PromptMessage>
@@ -110,8 +109,12 @@ type ToolCall = {
 };
 
 const TOOL_MESSAGE_PREFIX = '__bma_tool_call__:';
+const REASONING_MESSAGE_PREFIX = '__bma_reasoning__:';
 
-type DisplayItem = { type: 'message'; message: StorageMessage } | { type: 'tools'; calls: ToolCall[] };
+type DisplayItem =
+  | { type: 'message'; message: StorageMessage }
+  | { type: 'tools'; calls: ToolCall[] }
+  | { type: 'reasoning'; message: StorageMessage; text: string };
 
 function buildDisplayItems(messages: StorageMessage[]): DisplayItem[] {
   const items: DisplayItem[] = [];
@@ -134,6 +137,13 @@ function buildDisplayItems(messages: StorageMessage[]): DisplayItem[] {
       if (toolCall.name !== 'done' && toolCall.name !== 'browser_action') {
         toolGroup.push(toolCall);
       }
+      return;
+    }
+
+    const reasoningText = message.actor !== 'user' ? parseReasoningMessage(message.content) : null;
+    if (reasoningText !== null) {
+      flushTools();
+      items.push({ type: 'reasoning', message, text: reasoningText });
       return;
     }
 
@@ -192,6 +202,16 @@ function parseToolCall(content: string, timestamp: number): ToolCall | null {
   return null;
 }
 
+function parseReasoningMessage(content: string): string | null {
+  if (!content.startsWith(REASONING_MESSAGE_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(content.slice(REASONING_MESSAGE_PREFIX.length)) as { text?: string };
+    return parsed.text ?? '';
+  } catch {
+    return '';
+  }
+}
+
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(',')}]`;
@@ -206,6 +226,10 @@ function stableStringify(value: unknown): string {
 }
 
 function ToolCallChain({ calls }: { calls: ToolCall[] }) {
+  if (calls.length === 1 && calls[0].name === 'fill_form_fields') {
+    return <BatchInputPlan call={calls[0]} />;
+  }
+
   return (
     <div className="mx-auto w-full max-w-3xl px-1 py-1">
       <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase text-zinc-500">
@@ -234,6 +258,121 @@ function ToolCallChain({ calls }: { calls: ToolCall[] }) {
           </ChainOfThoughtStep>
         ))}
       </ChainOfThought>
+    </div>
+  );
+}
+
+type PlannedField = {
+  index?: number;
+  label?: string;
+  text?: string;
+};
+
+function BatchInputPlan({ call }: { call: ToolCall }) {
+  const fields = getPlannedFields(call);
+  const completed = call.state === 'output-available';
+  const failed = call.state === 'output-error';
+
+  return (
+    <div className="mx-auto w-full max-w-3xl px-1 py-1">
+      <div className="overflow-hidden rounded-lg border border-zinc-800 bg-[#111113] shadow-sm shadow-black/20">
+        <div className="flex items-start gap-3 border-b border-zinc-800 px-3 py-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-orange-300/20 bg-orange-300/10 text-orange-200">
+            <FiClipboard className="size-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="truncate text-sm font-semibold text-zinc-100">Planned form fill</div>
+              <span className={`shrink-0 text-[11px] ${getToolStatusClass(call.state)}`}>
+                {getToolStatusLabel(call.state)}
+              </span>
+            </div>
+            <div className="mt-0.5 text-xs text-zinc-500">
+              {fields.length} field{fields.length === 1 ? '' : 's'} queued as one batch
+            </div>
+          </div>
+          <div className="text-[11px] text-zinc-600">{formatTimestamp(call.timestamp)}</div>
+        </div>
+
+        {fields.length > 0 && (
+          <div className="divide-y divide-zinc-800/80">
+            {fields.map((field, index) => (
+              <div
+                key={`${field.index ?? index}-${field.label ?? 'field'}`}
+                className="grid grid-cols-[1.5rem_1fr] gap-2 px-3 py-2.5">
+                <span
+                  className={`mt-0.5 flex size-5 items-center justify-center rounded-full border ${
+                    failed
+                      ? 'border-rose-400/30 bg-rose-400/10 text-rose-300'
+                      : completed
+                        ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
+                        : 'border-sky-400/30 bg-sky-400/10 text-sky-300'
+                  }`}>
+                  {completed ? <FiCheck className="size-3" /> : <FiEdit3 className="size-3" />}
+                </span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm text-zinc-100">
+                      {field.label || `Field ${field.index ?? index + 1}`}
+                    </span>
+                    {field.index !== undefined && (
+                      <span className="shrink-0 rounded border border-zinc-800 bg-zinc-950 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500">
+                        #{field.index}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 truncate font-mono text-xs text-zinc-400">{field.text ?? ''}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {call.errorText && (
+          <div className="border-t border-rose-400/20 bg-rose-400/10 px-3 py-2 text-xs text-rose-100">
+            {call.errorText}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function getPlannedFields(call: ToolCall): PlannedField[] {
+  const fields = call.input?.fields;
+  if (!Array.isArray(fields)) return [];
+
+  return fields
+    .filter((field): field is Record<string, unknown> => Boolean(field) && typeof field === 'object')
+    .map(field => ({
+      index: typeof field.index === 'number' ? field.index : undefined,
+      label: typeof field.label === 'string' ? field.label : undefined,
+      text: typeof field.text === 'string' ? field.text : undefined,
+    }));
+}
+
+function ReasoningBlock({ text, timestamp }: { text: string; timestamp: number }) {
+  const tokenEstimate = Math.max(1, Math.ceil(text.trim().split(/\s+/).filter(Boolean).length * 1.3));
+
+  return (
+    <div className="mx-auto w-full max-w-3xl px-1 py-1">
+      <details className="group overflow-hidden rounded-lg border border-zinc-800 bg-[#0f0f10] shadow-sm shadow-black/20">
+        <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2.5 transition-colors hover:bg-white/[0.04] [&::-webkit-details-marker]:hidden">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-sky-400/20 bg-sky-400/10 text-sky-200">
+            <FiCpu className="size-4" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium text-zinc-100">Reasoning stream</span>
+            <span className="block text-[11px] text-zinc-500">
+              ~{tokenEstimate} tokens · {formatTimestamp(timestamp)}
+            </span>
+          </span>
+          <span className="rounded-full border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400">Open</span>
+        </summary>
+        <pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-zinc-800 bg-black/20 px-3 py-3 font-mono text-xs leading-5 text-zinc-300">
+          {text}
+        </pre>
+      </details>
     </div>
   );
 }
