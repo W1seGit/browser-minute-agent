@@ -761,13 +761,51 @@ export default class Page {
   /**
    * Type text into the currently focused element (document.activeElement).
    * The caller must ensure the target is focused first (e.g. via click_element).
+   *
+   * Strategy:
+   * 1. Native <input>/<textarea> — splice text at cursor into .value directly.
+   * 2. contenteditable / editor divs — use document.execCommand('insertText').
+   * 3. Fallback — simulated keystrokes via keyboard.type().
    */
   async typeText(text: string): Promise<void> {
     if (!this._puppeteerPage) {
       throw new Error('Puppeteer page is not connected');
     }
     try {
-      await this._puppeteerPage.keyboard.type(text, { delay: 0 });
+      const inserted = await this._puppeteerPage.evaluate((t: string) => {
+        const el = document.activeElement;
+        if (!el || !(el instanceof HTMLElement)) {
+          return false;
+        }
+
+        // Native input / textarea — splice at cursor, dispatch events
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+          const start = el.selectionStart ?? el.value.length;
+          const end = el.selectionEnd ?? el.value.length;
+          el.value = el.value.slice(0, start) + t + el.value.slice(end);
+          el.selectionStart = el.selectionEnd = start + t.length;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        }
+
+        // contenteditable or rich editors — execCommand is instant and fires
+        // the Input events that Monaco, CodeMirror, Quill, etc. rely on.
+        if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
+          return document.execCommand('insertText', false, t);
+        }
+
+        // Last resort: some editors (e.g. CodeMirror) keep a hidden textarea
+        // focused but the visible div is not contenteditable. execCommand can
+        // still work in those cases because the document has focus.
+        return document.execCommand('insertText', false, t);
+      }, text);
+
+      if (!inserted) {
+        // Fallback for synthetic focus models (canvas editors, etc.)
+        await this._puppeteerPage.keyboard.type(text, { delay: 0 });
+      }
+
       await this.waitForPageAndFramesLoad();
       logger.info('typeText complete', text.slice(0, 50));
     } catch (error) {
