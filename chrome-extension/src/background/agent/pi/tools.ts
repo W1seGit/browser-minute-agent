@@ -103,7 +103,7 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
     createTool(
       'click_element',
       'click_element',
-      'Click an element by index. Use this once for a target. If the user asked to type into an editor or input, use input_text next instead of clicking the same element again.',
+      'Click an element by index. Use this once to focus or activate a target. If this is an editor, input, IDE, or terminal, use input_text next.',
       Type.Object({
         intent: optionalIntent,
         index: Type.Number({ description: 'index of the element' }),
@@ -125,7 +125,7 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         const initialTabIds = await context.browserContext.getAllTabIds();
         await page.clickElementNode(context.options.useVision, elementNode);
         let msg = t('act_click_ok', [params.index.toString(), elementNode.getAllTextTillNextClickableElement(2)]);
-        msg += '\n\nClick succeeded. If this was an editor or input target, use input_text next; do not click the same element again.';
+        msg += '\n\nClick succeeded. For editor/input/terminal targets, use input_text next.';
         await page.waitForPageAndFramesLoad();
         const newTabIds = await context.browserContext.getAllTabIds();
         if (newTabIds.size > initialTabIds.size) {
@@ -140,16 +140,16 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
     createTool(
       'input_text',
       'input_text',
-      'Type the full text into the currently focused element (the element that has keyboard focus). You MUST click the target element first with click_element to establish focus before using this tool. Do NOT use this for special keys like Enter or Backspace — use send_keys for those.',
+      'Type the full text into the currently focused element. Click the target first. For terminals, type the command/input with this tool, then use send_keys for Enter. Do not use this for special keys like Enter or Backspace.',
       Type.Object({
         intent: optionalIntent,
         text: Type.String({ description: 'text to type into the focused element' }),
       }),
-      async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
+      async (_toolCallId, params, signal): Promise<AgentToolResult<unknown>> => {
         void params.intent;
         const page = await context.browserContext.getCurrentPage();
-        await page.typeText(params.text);
-        const msg = `Typed: ${params.text}`;
+        await page.typeText(params.text, signal);
+        const msg = `Typed text: ${params.text}`;
         return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
       },
     ),
