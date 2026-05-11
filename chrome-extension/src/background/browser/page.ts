@@ -1407,8 +1407,8 @@ export default class Page {
     ]);
 
     const IGNORED_URL_PATTERNS = new Set([
-      // Analytics and tracking
-      'analytics',
+      // Tracking and ads
+      'tracking',
       'tracking',
       'telemetry',
       'beacon',

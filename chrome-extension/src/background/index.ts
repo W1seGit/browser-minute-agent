@@ -5,7 +5,6 @@ import {
   firewallStore,
   generalSettingsStore,
   llmProviderStore,
-  analyticsSettingsStore,
 } from '@extension/storage';
 import { t } from '@extension/i18n';
 import BrowserContext from './browser/context';
@@ -13,11 +12,9 @@ import { Executor } from './agent/executor';
 import { createLogger } from './log';
 import { ExecutionState } from './agent/event/types';
 import { createChatModel } from './agent/helper';
-import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { DEFAULT_AGENT_OPTIONS } from './agent/types';
 import { SpeechToTextService } from './services/speechToText';
 import { injectBuildDomTreeScripts } from './browser/dom/service';
-import { analytics } from './services/analytics';
 
 const logger = createLogger('background');
 
@@ -53,18 +50,6 @@ chrome.tabs.onRemoved.addListener(tabId => {
 });
 
 logger.info('background loaded');
-
-// Initialize analytics
-analytics.init().catch(error => {
-  logger.error('Failed to initialize analytics:', error);
-});
-
-// Listen for analytics settings changes
-analyticsSettingsStore.subscribe(() => {
-  analytics.updateSettings().catch(error => {
-    logger.error('Failed to update analytics settings:', error);
-  });
-});
 
 // Listen for simple messages (e.g., from options page)
 chrome.runtime.onMessage.addListener(() => {
@@ -272,8 +257,8 @@ async function setupExecutor(taskId: string, task: string, browserContext: Brows
     throw new Error(t('bg_setup_noApiKeys'));
   }
 
-  // Clean up any legacy validator settings for backward compatibility
-  await agentModelStore.cleanupLegacyValidatorSettings();
+  // Migrate old agent slots into the single min-agent slot.
+  await agentModelStore.cleanupLegacyAgentSettings();
 
   const agentModels = await agentModelStore.getAllAgentModels();
   // verify if every provider used in the agent models exists in the providers
@@ -283,21 +268,12 @@ async function setupExecutor(taskId: string, task: string, browserContext: Brows
     }
   }
 
-  const navigatorModel = agentModels[AgentNameEnum.Navigator];
-  if (!navigatorModel) {
-    throw new Error(t('bg_setup_noNavigatorModel'));
+  const minAgentModel = agentModels[AgentNameEnum.MinAgent];
+  if (!minAgentModel) {
+    throw new Error('Select a model for min-agent before starting a task.');
   }
-  // Log the provider config being used for the navigator
-  const navigatorProviderConfig = providers[navigatorModel.provider];
-  const navigatorLLM = createChatModel(navigatorProviderConfig, navigatorModel);
-
-  let plannerLLM: BaseChatModel | null = null;
-  const plannerModel = agentModels[AgentNameEnum.Planner];
-  if (plannerModel) {
-    // Log the provider config being used for the planner
-    const plannerProviderConfig = providers[plannerModel.provider];
-    plannerLLM = createChatModel(plannerProviderConfig, plannerModel);
-  }
+  const minAgentProviderConfig = providers[minAgentModel.provider];
+  const minAgentLLM = createChatModel(minAgentProviderConfig, minAgentModel);
 
   // Apply firewall settings to browser context
   const firewall = await firewallStore.getFirewall();
@@ -319,15 +295,12 @@ async function setupExecutor(taskId: string, task: string, browserContext: Brows
     displayHighlights: generalSettings.displayHighlights,
   });
 
-  const executor = new Executor(task, taskId, browserContext, navigatorLLM, {
-    plannerLLM: plannerLLM ?? navigatorLLM,
+  const executor = new Executor(task, taskId, browserContext, minAgentLLM, {
     agentOptions: {
       maxSteps: generalSettings.maxSteps,
       maxFailures: generalSettings.maxFailures,
       maxActionsPerStep: generalSettings.maxActionsPerStep,
       useVision: generalSettings.useVision,
-      useVisionForPlanner: true,
-      planningInterval: generalSettings.planningInterval,
     },
     generalSettings: generalSettings,
   });

@@ -9,15 +9,15 @@ export const ACTOR_PROFILES = {
     icon: 'icons/system.svg',
     iconBackground: '#2196F3',
   },
-  planner: {
-    name: 'Planner',
-    icon: 'icons/planner.svg',
-    iconBackground: '#FF9800',
+  'min-agent': {
+    name: 'min-agent',
+    icon: 'icons/navigator.svg',
+    iconBackground: '#FFFFFF',
   },
   navigator: {
-    name: 'Navigator',
+    name: 'min-agent',
     icon: 'icons/navigator.svg',
-    iconBackground: '#40A9FF',
+    iconBackground: '#FFFFFF',
   },
   validator: {
     name: 'Validator',

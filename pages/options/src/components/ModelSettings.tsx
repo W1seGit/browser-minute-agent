@@ -61,21 +61,20 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
   const [providers, setProviders] = useState<Record<string, ProviderConfig>>({});
   const [modifiedProviders, setModifiedProviders] = useState<Set<string>>(new Set());
   const [providersFromStorage, setProvidersFromStorage] = useState<Set<string>>(new Set());
-  const [selectedModels, setSelectedModels] = useState<Record<AgentNameEnum, string>>({
-    [AgentNameEnum.Navigator]: '',
-    [AgentNameEnum.Planner]: '',
+  const [selectedModels, setSelectedModels] = useState<Partial<Record<AgentNameEnum, string>>>({
+    [AgentNameEnum.MinAgent]: '',
   });
-  const [modelParameters, setModelParameters] = useState<Record<AgentNameEnum, { temperature: number; topP: number }>>({
-    [AgentNameEnum.Navigator]: { temperature: 0, topP: 0 },
-    [AgentNameEnum.Planner]: { temperature: 0, topP: 0 },
+  const [modelParameters, setModelParameters] = useState<
+    Partial<Record<AgentNameEnum, { temperature: number; topP: number }>>
+  >({
+    [AgentNameEnum.MinAgent]: { temperature: 0, topP: 0 },
   });
 
   // State for reasoning effort for O-series models
   const [reasoningEffort, setReasoningEffort] = useState<
-    Record<AgentNameEnum, 'minimal' | 'low' | 'medium' | 'high' | undefined>
+    Partial<Record<AgentNameEnum, 'minimal' | 'low' | 'medium' | 'high' | undefined>>
   >({
-    [AgentNameEnum.Navigator]: undefined,
-    [AgentNameEnum.Planner]: undefined,
+    [AgentNameEnum.MinAgent]: undefined,
   });
   const [newModelInputs, setNewModelInputs] = useState<Record<string, string>>({});
   const [isProviderSelectorOpen, setIsProviderSelectorOpen] = useState(false);
@@ -119,12 +118,11 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
   useEffect(() => {
     const loadAgentModels = async () => {
       try {
-        const models: Record<AgentNameEnum, string> = {
-          [AgentNameEnum.Planner]: '',
-          [AgentNameEnum.Navigator]: '',
+        const models: Partial<Record<AgentNameEnum, string>> = {
+          [AgentNameEnum.MinAgent]: '',
         };
 
-        for (const agent of Object.values(AgentNameEnum)) {
+        for (const agent of [AgentNameEnum.MinAgent]) {
           const config = await agentModelStore.getAgentModel(agent);
           if (config) {
             // Store in provider>model format
@@ -133,8 +131,8 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
               setModelParameters(prev => ({
                 ...prev,
                 [agent]: {
-                  temperature: config.parameters?.temperature ?? prev[agent].temperature,
-                  topP: config.parameters?.topP ?? prev[agent].topP,
+                  temperature: Number(config.parameters?.temperature ?? prev[agent]?.temperature ?? 0),
+                  topP: Number(config.parameters?.topP ?? prev[agent]?.topP ?? 0),
                 },
               }));
             }
@@ -564,7 +562,11 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
     console.log(`[handleModelChange] Setting ${agentName} model: provider=${provider}, model=${model}`);
 
     // Set parameters based on provider type
-    const newParameters = getDefaultAgentModelParams(provider, agentName);
+    const defaultParameters = getDefaultAgentModelParams(provider, agentName);
+    const newParameters = {
+      temperature: Number(defaultParameters.temperature ?? 0),
+      topP: Number(defaultParameters.topP ?? 0),
+    };
 
     setModelParameters(prev => ({
       ...prev,
@@ -589,7 +591,7 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
         // Reset reasoning effort if switching models
         if (isOpenAIReasoningModel(modelValue)) {
           // Set default reasoning effort based on agent type
-          const defaultReasoningEffort = agentName === AgentNameEnum.Planner ? 'low' : 'minimal';
+          const defaultReasoningEffort = 'minimal';
           setReasoningEffort(prev => ({
             ...prev,
             [agentName]: prev[agentName] || defaultReasoningEffort,
@@ -611,9 +613,7 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
           provider,
           modelName: model,
           parameters: parametersToSave,
-          reasoningEffort: isOpenAIReasoningModel(modelValue)
-            ? reasoningEffort[agentName] || (agentName === AgentNameEnum.Planner ? 'low' : 'minimal')
-            : undefined,
+          reasoningEffort: isOpenAIReasoningModel(modelValue) ? reasoningEffort[agentName] || 'minimal' : undefined,
         });
       } else {
         // Reset storage if no model is selected
@@ -655,7 +655,8 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
 
   const handleParameterChange = async (agentName: AgentNameEnum, paramName: 'temperature' | 'topP', value: number) => {
     const newParameters = {
-      ...modelParameters[agentName],
+      temperature: modelParameters[agentName]?.temperature ?? 0,
+      topP: modelParameters[agentName]?.topP ?? 0,
       [paramName]: value,
     };
 
@@ -760,23 +761,23 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
                 min="0"
                 max="2"
                 step="0.01"
-                value={modelParameters[agentName].temperature}
+                value={modelParameters[agentName]?.temperature ?? 0}
                 onChange={e => handleParameterChange(agentName, 'temperature', Number.parseFloat(e.target.value))}
                 style={{
-                  background: `linear-gradient(to right, ${isDarkMode ? '#3b82f6' : '#60a5fa'} 0%, ${isDarkMode ? '#3b82f6' : '#60a5fa'} ${(modelParameters[agentName].temperature / 2) * 100}%, ${isDarkMode ? '#475569' : '#cbd5e1'} ${(modelParameters[agentName].temperature / 2) * 100}%, ${isDarkMode ? '#475569' : '#cbd5e1'} 100%)`,
+                  background: `linear-gradient(to right, ${isDarkMode ? '#3b82f6' : '#60a5fa'} 0%, ${isDarkMode ? '#3b82f6' : '#60a5fa'} ${((modelParameters[agentName]?.temperature ?? 0) / 2) * 100}%, ${isDarkMode ? '#475569' : '#cbd5e1'} ${((modelParameters[agentName]?.temperature ?? 0) / 2) * 100}%, ${isDarkMode ? '#475569' : '#cbd5e1'} 100%)`,
                 }}
                 className={`flex-1 ${isDarkMode ? 'accent-blue-500' : 'accent-blue-400'} h-1 appearance-none rounded-full`}
               />
               <div className="flex items-center space-x-2">
                 <span className={`w-12 text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                  {modelParameters[agentName].temperature.toFixed(2)}
+                  {(modelParameters[agentName]?.temperature ?? 0).toFixed(2)}
                 </span>
                 <input
                   type="number"
                   min="0"
                   max="2"
                   step="0.01"
-                  value={modelParameters[agentName].temperature}
+                  value={modelParameters[agentName]?.temperature ?? 0}
                   onChange={e => {
                     const value = Number.parseFloat(e.target.value);
                     if (!Number.isNaN(value) && value >= 0 && value <= 2) {
@@ -808,23 +809,23 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
                   min="0"
                   max="1"
                   step="0.001"
-                  value={modelParameters[agentName].topP}
+                  value={modelParameters[agentName]?.topP ?? 0}
                   onChange={e => handleParameterChange(agentName, 'topP', Number.parseFloat(e.target.value))}
                   style={{
-                    background: `linear-gradient(to right, ${isDarkMode ? '#3b82f6' : '#60a5fa'} 0%, ${isDarkMode ? '#3b82f6' : '#60a5fa'} ${modelParameters[agentName].topP * 100}%, ${isDarkMode ? '#475569' : '#cbd5e1'} ${modelParameters[agentName].topP * 100}%, ${isDarkMode ? '#475569' : '#cbd5e1'} 100%)`,
+                    background: `linear-gradient(to right, ${isDarkMode ? '#3b82f6' : '#60a5fa'} 0%, ${isDarkMode ? '#3b82f6' : '#60a5fa'} ${(modelParameters[agentName]?.topP ?? 0) * 100}%, ${isDarkMode ? '#475569' : '#cbd5e1'} ${(modelParameters[agentName]?.topP ?? 0) * 100}%, ${isDarkMode ? '#475569' : '#cbd5e1'} 100%)`,
                   }}
                   className={`flex-1 ${isDarkMode ? 'accent-blue-500' : 'accent-blue-400'} h-1 appearance-none rounded-full`}
                 />
                 <div className="flex items-center space-x-2">
                   <span className={`w-12 text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                    {modelParameters[agentName].topP.toFixed(3)}
+                    {(modelParameters[agentName]?.topP ?? 0).toFixed(3)}
                   </span>
                   <input
                     type="number"
                     min="0"
                     max="1"
                     step="0.001"
-                    value={modelParameters[agentName].topP}
+                    value={modelParameters[agentName]?.topP ?? 0}
                     onChange={e => {
                       const value = Number.parseFloat(e.target.value);
                       if (!Number.isNaN(value) && value >= 0 && value <= 1) {
@@ -850,7 +851,7 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
             <div className="flex flex-1 items-center space-x-2">
               <select
                 id={`${agentName}-reasoning-effort`}
-                value={reasoningEffort[agentName] || (agentName === AgentNameEnum.Planner ? 'low' : 'minimal')}
+                value={reasoningEffort[agentName] || 'minimal'}
                 onChange={e =>
                   handleReasoningEffortChange(agentName, e.target.value as 'minimal' | 'low' | 'medium' | 'high')
                 }
@@ -869,10 +870,8 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
 
   const getAgentDescription = (agentName: AgentNameEnum) => {
     switch (agentName) {
-      case AgentNameEnum.Navigator:
-        return t('options_models_agents_navigator');
-      case AgentNameEnum.Planner:
-        return t('options_models_agents_planner');
+      case AgentNameEnum.MinAgent:
+        return 'The model min-agent uses to browse, reason, and answer.';
       default:
         return '';
     }
@@ -1562,23 +1561,14 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
             <Button
               variant="secondary"
               onClick={() => setIsProviderSelectorOpen(prev => !prev)}
-              className={`flex w-full items-center justify-center font-medium ${
-                isDarkMode
-                  ? 'border-blue-700 bg-blue-600 text-white hover:bg-blue-500'
-                  : 'border-blue-200 bg-blue-100 text-blue-800 hover:bg-blue-200'
-              }`}>
+              className="flex w-full items-center justify-center rounded-xl border border-white/10 bg-white text-sm font-medium text-black transition-opacity hover:opacity-85">
               <span className="mr-2 text-sm">+</span>{' '}
               <span className="text-sm">{t('options_models_addNewProvider')}</span>
             </Button>
 
             {isProviderSelectorOpen && (
-              <div
-                className={`absolute z-10 mt-2 w-full overflow-hidden rounded-md border ${
-                  isDarkMode
-                    ? 'border-blue-600 bg-slate-700 shadow-lg shadow-slate-900/50'
-                    : 'border-blue-200 bg-white shadow-xl shadow-blue-100/50'
-                }`}>
-                <div className="py-1">
+              <div className="absolute z-10 mt-2 max-h-80 w-full overflow-hidden rounded-2xl border border-white/10 bg-neutral-950 shadow-2xl shadow-black/50">
+                <div className="max-h-80 overflow-y-auto p-2">
                   {/* Map through provider types to create buttons */}
                   {Object.values(ProviderTypeEnum)
                     // Allow Azure to appear multiple times, but filter out other already added providers
@@ -1593,11 +1583,7 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
                       <button
                         key={type}
                         type="button"
-                        className={`flex w-full items-center px-4 py-3 text-left text-sm ${
-                          isDarkMode
-                            ? 'text-blue-200 hover:bg-blue-600/30 hover:text-white'
-                            : 'text-blue-700 hover:bg-blue-100 hover:text-blue-800'
-                        } transition-colors duration-150`}
+                        className="flex w-full items-center rounded-xl px-4 py-3 text-left text-sm text-white/80 transition-colors duration-150 hover:bg-white/[0.08] hover:text-white"
                         onClick={() => handleProviderSelection(type)}>
                         <span className="font-medium">{getDefaultDisplayNameFromProviderId(type)}</span>
                       </button>
@@ -1606,11 +1592,7 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
                   {/* Custom provider button (always shown) */}
                   <button
                     type="button"
-                    className={`flex w-full items-center px-4 py-3 text-left text-sm ${
-                      isDarkMode
-                        ? 'text-blue-200 hover:bg-blue-600/30 hover:text-white'
-                        : 'text-blue-700 hover:bg-blue-100 hover:text-blue-800'
-                    } transition-colors duration-150`}
+                    className="flex w-full items-center rounded-xl px-4 py-3 text-left text-sm text-white/80 transition-colors duration-150 hover:bg-white/[0.08] hover:text-white"
                     onClick={() => handleProviderSelection(ProviderTypeEnum.CustomOpenAI)}>
                     <span className="font-medium">{t('options_models_providers_openaiCompatible')}</span>
                   </button>
@@ -1618,19 +1600,6 @@ export const ModelSettings = ({ isDarkMode = false }: ModelSettingsProps) => {
               </div>
             )}
           </div>
-        </div>
-      </div>
-
-      {/* Updated Agent Models Section */}
-      <div
-        className={`rounded-lg border ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-blue-100 bg-gray-50'} p-6 text-left shadow-sm`}>
-        <h2 className={`mb-4 text-left text-xl font-semibold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
-          {t('options_models_selection_header')}
-        </h2>
-        <div className="space-y-4">
-          {[AgentNameEnum.Planner, AgentNameEnum.Navigator].map(agentName => (
-            <div key={agentName}>{renderModelSelect(agentName)}</div>
-          ))}
         </div>
       </div>
 

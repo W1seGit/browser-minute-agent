@@ -1,10 +1,8 @@
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
-import { type ActionResult, AgentContext, type AgentOptions, type AgentOutput } from './types';
+import { type ActionResult, AgentContext, type AgentOptions } from './types';
 import { t } from '@extension/i18n';
 import { NavigatorAgent, NavigatorActionRegistry } from './agents/navigator';
-import { PlannerAgent, type PlannerOutput } from './agents/planner';
 import { NavigatorPrompt } from './prompts/navigator';
-import { PlannerPrompt } from './prompts/planner';
 import { createLogger } from '@src/background/log';
 import MessageManager from './messages/service';
 import type BrowserContext from '../browser/context';
@@ -24,12 +22,10 @@ import { URLNotAllowedError } from '../browser/views';
 import { chatHistoryStore } from '@extension/storage/lib/chat';
 import type { AgentStepHistory } from './history';
 import type { GeneralSettingsConfig } from '@extension/storage';
-import { analytics } from '../services/analytics';
 
 const logger = createLogger('Executor');
 
 export interface ExecutorExtraArgs {
-  plannerLLM?: BaseChatModel;
   extractorLLM?: BaseChatModel;
   agentOptions?: Partial<AgentOptions>;
   generalSettings?: GeneralSettingsConfig;
@@ -37,9 +33,7 @@ export interface ExecutorExtraArgs {
 
 export class Executor {
   private readonly navigator: NavigatorAgent;
-  private readonly planner: PlannerAgent;
   private readonly context: AgentContext;
-  private readonly plannerPrompt: PlannerPrompt;
   private readonly navigatorPrompt: NavigatorPrompt;
   private readonly generalSettings: GeneralSettingsConfig | undefined;
   private tasks: string[] = [];
@@ -52,7 +46,6 @@ export class Executor {
   ) {
     const messageManager = new MessageManager();
 
-    const plannerLLM = extraArgs?.plannerLLM ?? navigatorLLM;
     const extractorLLM = extraArgs?.extractorLLM ?? navigatorLLM;
     const eventManager = new EventManager();
     const context = new AgentContext(
@@ -66,7 +59,6 @@ export class Executor {
     this.generalSettings = extraArgs?.generalSettings;
     this.tasks.push(task);
     this.navigatorPrompt = new NavigatorPrompt(context.options.maxActionsPerStep);
-    this.plannerPrompt = new PlannerPrompt();
 
     const actionBuilder = new ActionBuilder(context, extractorLLM);
     const navigatorActionRegistry = new NavigatorActionRegistry(actionBuilder.buildDefaultActions());
@@ -76,12 +68,6 @@ export class Executor {
       chatLLM: navigatorLLM,
       context: context,
       prompt: this.navigatorPrompt,
-    });
-
-    this.planner = new PlannerAgent({
-      chatLLM: plannerLLM,
-      context: context,
-      prompt: this.plannerPrompt,
     });
 
     this.context = context;
@@ -107,20 +93,6 @@ export class Executor {
   }
 
   /**
-   * Check if task is complete based on planner output and handle completion
-   */
-  private checkTaskCompletion(planOutput: AgentOutput<PlannerOutput> | null): boolean {
-    if (planOutput?.result?.done) {
-      logger.info('✅ Planner confirms task completion');
-      if (planOutput.result.final_answer) {
-        this.context.finalAnswer = planOutput.result.final_answer;
-      }
-      return true;
-    }
-    return false;
-  }
-
-  /**
    * Execute the task
    *
    * @returns {Promise<void>}
@@ -135,11 +107,7 @@ export class Executor {
     try {
       this.context.emitEvent(Actors.SYSTEM, ExecutionState.TASK_START, this.context.taskId);
 
-      // Track task start
-      void analytics.trackTaskStart(this.context.taskId);
-
       let step = 0;
-      let latestPlanOutput: AgentOutput<PlannerOutput> | null = null;
       let navigatorDone = false;
 
       for (step = 0; step < allowedMaxSteps; step++) {
@@ -153,49 +121,27 @@ export class Executor {
           break;
         }
 
-        // Run planner periodically for guidance
-        if (this.planner && (context.nSteps % context.options.planningInterval === 0 || navigatorDone)) {
-          navigatorDone = false;
-          latestPlanOutput = await this.runPlanner();
-
-          // Check if task is complete after planner run
-          if (this.checkTaskCompletion(latestPlanOutput)) {
-            break;
-          }
-        }
-
         // Execute navigator
         navigatorDone = await this.navigate();
 
-        // If navigator indicates completion, the next periodic planner run will validate it
         if (navigatorDone) {
-          logger.info('🔄 Navigator indicates completion - will be validated by next planner run');
+          logger.info('Navigator indicates task completion');
+          break;
         }
       }
 
       // Determine task completion status
-      const isCompleted = latestPlanOutput?.result?.done === true;
+      const isCompleted = navigatorDone;
 
       if (isCompleted) {
         // Emit final answer if available, otherwise use task ID
         const finalMessage = this.context.finalAnswer || this.context.taskId;
         this.context.emitEvent(Actors.SYSTEM, ExecutionState.TASK_OK, finalMessage);
-
-        // Track task completion
-        void analytics.trackTaskComplete(this.context.taskId);
       } else if (step >= allowedMaxSteps) {
         logger.error('❌ Task failed: Max steps reached');
         this.context.emitEvent(Actors.SYSTEM, ExecutionState.TASK_FAIL, t('exec_errors_maxStepsReached'));
-
-        // Track task failure with specific error category
-        const maxStepsError = new MaxStepsReachedError(t('exec_errors_maxStepsReached'));
-        const errorCategory = analytics.categorizeError(maxStepsError);
-        void analytics.trackTaskFailed(this.context.taskId, errorCategory);
       } else if (this.context.stopped) {
         this.context.emitEvent(Actors.SYSTEM, ExecutionState.TASK_CANCEL, t('exec_task_cancel'));
-
-        // Track task cancellation
-        void analytics.trackTaskCancelled(this.context.taskId);
       } else {
         this.context.emitEvent(Actors.SYSTEM, ExecutionState.TASK_PAUSE, t('exec_task_pause'));
         // Note: We don't track pause as it's not a final state
@@ -203,18 +149,14 @@ export class Executor {
     } catch (error) {
       if (error instanceof RequestCancelledError) {
         this.context.emitEvent(Actors.SYSTEM, ExecutionState.TASK_CANCEL, t('exec_task_cancel'));
-
-        // Track task cancellation
-        void analytics.trackTaskCancelled(this.context.taskId);
       } else {
         const errorMessage = error instanceof Error ? error.message : String(error);
         this.context.emitEvent(Actors.SYSTEM, ExecutionState.TASK_FAIL, t('exec_task_fail', [errorMessage]));
-
-        // Track task failure with detailed error categorization
-        const errorCategory = analytics.categorizeError(error instanceof Error ? error : errorMessage);
-        void analytics.trackTaskFailed(this.context.taskId, errorCategory);
       }
     } finally {
+      await this.context.browserContext.removeHighlight().catch(error => {
+        logger.warning(`Failed to remove highlights: ${error}`);
+      });
       if (import.meta.env.DEV) {
         logger.debug('Executor history', JSON.stringify(this.context.history, null, 2));
       }
@@ -226,48 +168,6 @@ export class Executor {
       } else {
         logger.info('Replay historical tasks is disabled, skipping history storage');
       }
-    }
-  }
-
-  /**
-   * Helper method to run planner and store its output
-   */
-  private async runPlanner(): Promise<AgentOutput<PlannerOutput> | null> {
-    const context = this.context;
-    try {
-      // Add current browser state to memory
-      let positionForPlan = 0;
-      if (this.tasks.length > 1 || this.context.nSteps > 0) {
-        await this.navigator.addStateMessageToMemory();
-        positionForPlan = this.context.messageManager.length() - 1;
-      } else {
-        positionForPlan = this.context.messageManager.length();
-      }
-
-      // Execute planner
-      const planOutput = await this.planner.execute();
-      if (planOutput.result) {
-        this.context.messageManager.addPlan(JSON.stringify(planOutput.result), positionForPlan);
-      }
-      return planOutput;
-    } catch (error) {
-      logger.error(`Failed to execute planner: ${error}`);
-      if (
-        error instanceof ChatModelAuthError ||
-        error instanceof ChatModelBadRequestError ||
-        error instanceof ChatModelForbiddenError ||
-        error instanceof URLNotAllowedError ||
-        error instanceof RequestCancelledError ||
-        error instanceof ExtensionConflictError
-      ) {
-        throw error;
-      }
-      context.consecutiveFailures++;
-      logger.error(`Failed to execute planner: ${error}`);
-      if (context.consecutiveFailures >= context.options.maxFailures) {
-        throw new MaxFailuresReachedError(t('exec_errors_maxFailuresReached'));
-      }
-      return null;
     }
   }
 

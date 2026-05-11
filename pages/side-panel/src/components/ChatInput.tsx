@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { FaMicrophone } from 'react-icons/fa';
 import { AiOutlineLoading3Quarters } from 'react-icons/ai';
+import { FiPaperclip, FiX } from 'react-icons/fi';
 import { t } from '@extension/i18n';
 
 interface ChatInputProps {
@@ -101,7 +102,7 @@ export default function ChatInput({
             : `<nano_attached_files>${fileContents}</nano_attached_files>`;
 
           // Create display version with only filenames (for UI)
-          const fileList = attachedFiles.map(file => `📎 ${file.name}`).join('\n');
+          const fileList = attachedFiles.map(file => `Attached: ${file.name}`).join('\n');
           displayContent = trimmedText ? `${trimmedText}\n\n${fileList}` : fileList;
         }
 
@@ -185,31 +186,31 @@ export default function ChatInput({
   return (
     <form
       onSubmit={handleSubmit}
-      className={`overflow-hidden rounded-lg border transition-colors ${disabled ? 'cursor-not-allowed' : 'focus-within:border-sky-400 hover:border-sky-400'} ${isDarkMode ? 'border-slate-700' : ''}`}
+      className={`overflow-hidden rounded-xl border border-white/15 bg-neutral-950 shadow-lg shadow-black/30 transition-colors ${disabled ? 'cursor-not-allowed opacity-60' : 'focus-within:border-white/70 hover:border-white/30'}`}
       aria-label={t('chat_input_form')}>
       <div className="flex flex-col">
         {/* File attachments display */}
         {attachedFiles.length > 0 && (
           <div
             className={`flex flex-wrap gap-2 border-b p-2 ${
-              isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-gray-200 bg-gray-50'
+              isDarkMode ? 'border-white/10 bg-neutral-950' : 'border-gray-200 bg-gray-50'
             }`}>
             {attachedFiles.map((file, index) => (
               <div
                 key={index}
                 className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs ${
-                  isDarkMode ? 'bg-slate-700 text-gray-300' : 'bg-gray-200 text-gray-700'
+                  isDarkMode ? 'bg-white/10 text-white/80' : 'bg-gray-200 text-gray-700'
                 }`}>
-                <span className="text-xs">📎</span>
+                <FiPaperclip className="size-3" />
                 <span className="max-w-[150px] truncate">{file.name}</span>
                 <button
                   type="button"
                   onClick={() => handleRemoveFile(index)}
                   className={`ml-1 rounded-sm transition-colors ${
-                    isDarkMode ? 'hover:bg-slate-600' : 'hover:bg-gray-300'
+                    isDarkMode ? 'hover:bg-white/15' : 'hover:bg-gray-300'
                   }`}
                   aria-label={`Remove ${file.name}`}>
-                  <span className="text-xs">✕</span>
+                  <FiX className="size-3" />
                 </button>
               </div>
             ))}
@@ -227,21 +228,18 @@ export default function ChatInput({
           className={`w-full resize-none border-none p-2 focus:outline-none ${
             disabled
               ? isDarkMode
-                ? 'cursor-not-allowed bg-slate-800 text-gray-400'
+                ? 'cursor-not-allowed bg-neutral-950 text-white/40'
                 : 'cursor-not-allowed bg-gray-100 text-gray-500'
               : isDarkMode
-                ? 'bg-slate-800 text-gray-200'
+                ? 'bg-neutral-950 text-white placeholder:text-white/35'
                 : 'bg-white'
           }`}
           placeholder={attachedFiles.length > 0 ? 'Add a message (optional)...' : t('chat_input_placeholder')}
           aria-label={t('chat_input_editor')}
         />
 
-        <div
-          className={`flex items-center justify-between px-2 py-1.5 ${
-            disabled ? (isDarkMode ? 'bg-slate-800' : 'bg-gray-100') : isDarkMode ? 'bg-slate-800' : 'bg-white'
-          }`}>
-          <div className="flex gap-2 text-gray-500">
+        <div className="flex items-center justify-between bg-neutral-950 px-2 py-1.5">
+          <div className="flex gap-2 text-white/60">
             {/* File attachment button */}
             <button
               type="button"
@@ -253,10 +251,10 @@ export default function ChatInput({
                 disabled
                   ? 'cursor-not-allowed opacity-50'
                   : isDarkMode
-                    ? 'text-gray-400 hover:bg-slate-700 hover:text-gray-200'
+                    ? 'text-white/50 hover:bg-white/10 hover:text-white'
                     : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
               }`}>
-              <span className="text-lg">📎</span>
+              <FiPaperclip className="size-4" />
             </button>
 
             {/* Hidden file input */}
@@ -288,7 +286,7 @@ export default function ChatInput({
                     : isRecording
                       ? 'bg-red-500 text-white hover:bg-red-600'
                       : isDarkMode
-                        ? 'text-gray-400 hover:bg-slate-700 hover:text-gray-200'
+                        ? 'text-white/50 hover:bg-white/10 hover:text-white'
                         : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
                 }`}>
                 {isProcessingSpeech ? (
@@ -321,7 +319,7 @@ export default function ChatInput({
               type="submit"
               disabled={isSendButtonDisabled}
               aria-disabled={isSendButtonDisabled}
-              className={`rounded-md bg-[#19C2FF] px-3 py-1 text-white transition-colors hover:enabled:bg-[#0073DC] ${isSendButtonDisabled ? 'cursor-not-allowed opacity-50' : ''}`}>
+              className={`rounded-md bg-white px-3 py-1 text-black transition-opacity hover:enabled:opacity-85 ${isSendButtonDisabled ? 'cursor-not-allowed opacity-40' : ''}`}>
               {t('chat_buttons_send')}
             </button>
           )}

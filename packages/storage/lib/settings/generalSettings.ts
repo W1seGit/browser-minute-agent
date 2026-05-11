@@ -8,8 +8,6 @@ export interface GeneralSettingsConfig {
   maxActionsPerStep: number;
   maxFailures: number;
   useVision: boolean;
-  useVisionForPlanner: boolean;
-  planningInterval: number;
   displayHighlights: boolean;
   minWaitPageLoad: number;
   replayHistoricalTasks: boolean;
@@ -27,8 +25,6 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettingsConfig = {
   maxActionsPerStep: 5,
   maxFailures: 3,
   useVision: false,
-  useVisionForPlanner: false,
-  planningInterval: 3,
   displayHighlights: true,
   minWaitPageLoad: 250,
   replayHistoricalTasks: false,

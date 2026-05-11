@@ -11,7 +11,7 @@ export const doneActionSchema: ActionSchema = {
   description: 'Complete task',
   schema: z.object({
     text: z.string(),
-    success: z.boolean(),
+    success: z.boolean().optional().default(true),
   }),
 };
 

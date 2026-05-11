@@ -25,6 +25,7 @@ export type AgentModelStorage = BaseStorage<AgentModelRecord> & {
   getConfiguredAgents: () => Promise<AgentNameEnum[]>;
   getAllAgentModels: () => Promise<Record<AgentNameEnum, ModelConfig>>;
   cleanupLegacyValidatorSettings: () => Promise<void>;
+  cleanupLegacyAgentSettings: () => Promise<void>;
 };
 
 const storage = createStorage<AgentModelRecord>(
@@ -84,9 +85,9 @@ export const agentModelStore: AgentModelStorage = {
   },
   resetAgentModel: async (agent: AgentNameEnum) => {
     await storage.set(current => {
-      const newAgents = { ...current.agents };
+      const newAgents: Partial<Record<AgentNameEnum, ModelConfig>> = { ...current.agents };
       delete newAgents[agent];
-      return { agents: newAgents };
+      return { agents: newAgents as Record<AgentNameEnum, ModelConfig> };
     });
   },
   hasAgentModel: async (agent: AgentNameEnum) => {
@@ -95,17 +96,26 @@ export const agentModelStore: AgentModelStorage = {
   },
   getConfiguredAgents: async () => {
     const data = await storage.get();
-    // Filter out any legacy validator entries for backward compatibility
+    // Filter out legacy planner/navigator/validator entries for backward compatibility.
     return Object.keys(data.agents).filter(
-      agentKey => agentKey !== 'validator' && Object.values(AgentNameEnum).includes(agentKey as AgentNameEnum),
+      agentKey =>
+        agentKey !== 'validator' &&
+        agentKey !== 'planner' &&
+        agentKey !== 'navigator' &&
+        Object.values(AgentNameEnum).includes(agentKey as AgentNameEnum),
     ) as AgentNameEnum[];
   },
   getAllAgentModels: async () => {
     const data = await storage.get();
-    // Filter out any legacy validator entries for backward compatibility
+    // Filter out legacy planner/navigator/validator entries for backward compatibility.
     const filteredAgents: Partial<Record<AgentNameEnum, ModelConfig>> = {};
     for (const [agentKey, config] of Object.entries(data.agents)) {
-      if (agentKey !== 'validator' && Object.values(AgentNameEnum).includes(agentKey as AgentNameEnum)) {
+      if (
+        agentKey !== 'validator' &&
+        agentKey !== 'planner' &&
+        agentKey !== 'navigator' &&
+        Object.values(AgentNameEnum).includes(agentKey as AgentNameEnum)
+      ) {
         filteredAgents[agentKey as AgentNameEnum] = config;
       }
     }
@@ -113,9 +123,21 @@ export const agentModelStore: AgentModelStorage = {
   },
   cleanupLegacyValidatorSettings: async () => {
     await storage.set(current => {
-      const newAgents = { ...current.agents };
-      delete newAgents['validator' as keyof typeof newAgents];
-      return { agents: newAgents };
+      const newAgents: Record<string, ModelConfig> = { ...current.agents };
+      delete newAgents.validator;
+      return { agents: newAgents as Record<AgentNameEnum, ModelConfig> };
+    });
+  },
+  cleanupLegacyAgentSettings: async () => {
+    await storage.set(current => {
+      const newAgents: Record<string, ModelConfig> = { ...current.agents };
+      if (!newAgents[AgentNameEnum.MinAgent] && newAgents.navigator) {
+        newAgents[AgentNameEnum.MinAgent] = newAgents.navigator;
+      }
+      delete newAgents.navigator;
+      delete newAgents.planner;
+      delete newAgents.validator;
+      return { agents: newAgents as Record<AgentNameEnum, ModelConfig> };
     });
   },
 };

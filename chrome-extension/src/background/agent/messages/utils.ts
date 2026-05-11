@@ -135,7 +135,7 @@ export function extractJsonFromModelOutput(content: string): Record<string, unkn
 }
 
 /**
- * Convert input messages to a format that is compatible with the planner model
+ * Convert input messages to a format that is compatible with provider-specific model quirks.
  * @param inputMessages - List of messages to convert
  * @param modelName - Name of the model to convert messages for
  * @returns Converted list of messages

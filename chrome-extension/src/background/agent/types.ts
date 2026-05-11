@@ -15,9 +15,7 @@ export interface AgentOptions {
   maxInputTokens: number;
   maxErrorLength: number;
   useVision: boolean;
-  useVisionForPlanner: boolean;
   includeAttributes: string[];
-  planningInterval: number;
 }
 
 export const DEFAULT_AGENT_OPTIONS: AgentOptions = {
@@ -28,9 +26,7 @@ export const DEFAULT_AGENT_OPTIONS: AgentOptions = {
   maxInputTokens: 128000,
   maxErrorLength: 400,
   useVision: false,
-  useVisionForPlanner: true,
   includeAttributes: DEFAULT_INCLUDE_ATTRIBUTES,
-  planningInterval: 3,
 };
 
 export class AgentContext {

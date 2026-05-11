@@ -1,8 +1,7 @@
 export enum Actors {
   SYSTEM = 'system',
   USER = 'user',
-  PLANNER = 'planner',
-  NAVIGATOR = 'navigator',
+  NAVIGATOR = 'min-agent',
 }
 
 export enum EventType {

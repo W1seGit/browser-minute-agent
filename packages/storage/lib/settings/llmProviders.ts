@@ -67,6 +67,17 @@ export function getProviderTypeByProviderId(providerId: string): ProviderTypeEnu
     case ProviderTypeEnum.OpenRouter:
     case ProviderTypeEnum.Groq:
     case ProviderTypeEnum.Cerebras:
+    case ProviderTypeEnum.Fireworks:
+    case ProviderTypeEnum.Together:
+    case ProviderTypeEnum.Mistral:
+    case ProviderTypeEnum.Nebius:
+    case ProviderTypeEnum.Xai:
+    case ProviderTypeEnum.Zai:
+    case ProviderTypeEnum.BigModel:
+    case ProviderTypeEnum.Aliyun:
+    case ProviderTypeEnum.Cohere:
+    case ProviderTypeEnum.OllamaCloud:
+    case ProviderTypeEnum.GithubCopilot:
       return providerId;
     default:
       return ProviderTypeEnum.CustomOpenAI;
@@ -99,6 +110,28 @@ export function getDefaultDisplayNameFromProviderId(providerId: string): string 
       return 'Cerebras';
     case ProviderTypeEnum.Llama:
       return 'Llama';
+    case ProviderTypeEnum.Fireworks:
+      return 'Fireworks';
+    case ProviderTypeEnum.Together:
+      return 'Together AI';
+    case ProviderTypeEnum.Mistral:
+      return 'Mistral';
+    case ProviderTypeEnum.Nebius:
+      return 'Nebius';
+    case ProviderTypeEnum.Xai:
+      return 'xAI';
+    case ProviderTypeEnum.Zai:
+      return 'Z.ai';
+    case ProviderTypeEnum.BigModel:
+      return 'BigModel';
+    case ProviderTypeEnum.Aliyun:
+      return 'Alibaba Cloud';
+    case ProviderTypeEnum.Cohere:
+      return 'Cohere';
+    case ProviderTypeEnum.OllamaCloud:
+      return 'Ollama Cloud';
+    case ProviderTypeEnum.GithubCopilot:
+      return 'GitHub Models';
     default:
       return providerId; // Use the provider id as display name for custom providers by default
   }
@@ -116,6 +149,17 @@ export function getDefaultProviderConfig(providerId: string): ProviderConfig {
     case ProviderTypeEnum.Groq: // Groq uses modelNames
     case ProviderTypeEnum.Cerebras: // Cerebras uses modelNames
     case ProviderTypeEnum.Llama: // Llama uses modelNames
+    case ProviderTypeEnum.Fireworks:
+    case ProviderTypeEnum.Together:
+    case ProviderTypeEnum.Mistral:
+    case ProviderTypeEnum.Nebius:
+    case ProviderTypeEnum.Xai:
+    case ProviderTypeEnum.Zai:
+    case ProviderTypeEnum.BigModel:
+    case ProviderTypeEnum.Aliyun:
+    case ProviderTypeEnum.Cohere:
+    case ProviderTypeEnum.OllamaCloud:
+    case ProviderTypeEnum.GithubCopilot:
       return {
         apiKey: '',
         name: getDefaultDisplayNameFromProviderId(providerId),
@@ -125,7 +169,29 @@ export function getDefaultProviderConfig(providerId: string): ProviderConfig {
             ? 'https://openrouter.ai/api/v1'
             : providerId === ProviderTypeEnum.Llama
               ? 'https://api.llama.com/v1'
-              : undefined,
+              : providerId === ProviderTypeEnum.Fireworks
+                ? 'https://api.fireworks.ai/inference/v1'
+                : providerId === ProviderTypeEnum.Together
+                  ? 'https://api.together.xyz/v1'
+                  : providerId === ProviderTypeEnum.Mistral
+                    ? 'https://api.mistral.ai/v1'
+                    : providerId === ProviderTypeEnum.Nebius
+                      ? 'https://api.studio.nebius.ai/v1'
+                      : providerId === ProviderTypeEnum.Xai
+                        ? 'https://api.x.ai/v1'
+                        : providerId === ProviderTypeEnum.Zai
+                          ? 'https://open.bigmodel.cn/api/paas/v4'
+                          : providerId === ProviderTypeEnum.BigModel
+                            ? 'https://open.bigmodel.cn/api/paas/v4'
+                            : providerId === ProviderTypeEnum.Aliyun
+                              ? 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+                              : providerId === ProviderTypeEnum.Cohere
+                                ? 'https://api.cohere.com/compatibility/v1'
+                                : providerId === ProviderTypeEnum.OllamaCloud
+                                  ? 'https://ollama.com'
+                                  : providerId === ProviderTypeEnum.GithubCopilot
+                                    ? 'https://models.inference.ai.azure.com'
+                                    : undefined,
         modelNames: [...(llmProviderModelNames[providerId] || [])],
         createdAt: Date.now(),
       };
