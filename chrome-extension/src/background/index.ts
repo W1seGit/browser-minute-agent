@@ -8,10 +8,11 @@ import {
 } from '@extension/storage';
 import { t } from '@extension/i18n';
 import BrowserContext from './browser/context';
-import { Executor } from './agent/executor';
+import { PiExecutor } from './agent/pi/executor';
 import { createLogger } from './log';
 import { ExecutionState } from './agent/event/types';
-import { createChatModel } from './agent/helper';
+// LangChain model creation removed - using Pi SDK instead
+// import { createChatModel } from './agent/helper';
 import { DEFAULT_AGENT_OPTIONS } from './agent/types';
 import { SpeechToTextService } from './services/speechToText';
 import { injectBuildDomTreeScripts } from './browser/dom/service';
@@ -19,7 +20,7 @@ import { injectBuildDomTreeScripts } from './browser/dom/service';
 const logger = createLogger('background');
 
 const browserContext = new BrowserContext({});
-let currentExecutor: Executor | null = null;
+let currentExecutor: PiExecutor | null = null;
 let currentPort: chrome.runtime.Port | null = null;
 const SIDE_PANEL_URL = chrome.runtime.getURL('side-panel/index.html');
 
@@ -273,7 +274,6 @@ async function setupExecutor(taskId: string, task: string, browserContext: Brows
     throw new Error('Select a model for min-agent before starting a task.');
   }
   const minAgentProviderConfig = providers[minAgentModel.provider];
-  const minAgentLLM = createChatModel(minAgentProviderConfig, minAgentModel);
 
   // Apply firewall settings to browser context
   const firewall = await firewallStore.getFirewall();
@@ -295,7 +295,7 @@ async function setupExecutor(taskId: string, task: string, browserContext: Brows
     displayHighlights: generalSettings.displayHighlights,
   });
 
-  const executor = new Executor(task, taskId, browserContext, minAgentLLM, {
+  const executor = new PiExecutor(task, taskId, browserContext, minAgentProviderConfig, minAgentModel, {
     agentOptions: {
       maxSteps: generalSettings.maxSteps,
       maxFailures: generalSettings.maxFailures,
@@ -309,7 +309,7 @@ async function setupExecutor(taskId: string, task: string, browserContext: Brows
 }
 
 // Update subscribeToExecutorEvents to use port
-async function subscribeToExecutorEvents(executor: Executor) {
+async function subscribeToExecutorEvents(executor: PiExecutor) {
   // Clear previous event listeners to prevent multiple subscriptions
   executor.clearExecutionEvents();
 
