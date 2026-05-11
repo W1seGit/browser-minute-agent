@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { FiArrowLeft, FiClock, FiSettings } from 'react-icons/fi';
+import { FiArrowDown, FiArrowLeft, FiClock, FiSettings } from 'react-icons/fi';
 import { PiPlusBold } from 'react-icons/pi';
 import { GrHistory } from 'react-icons/gr';
 import {
@@ -181,10 +181,12 @@ const SidePanel = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessingSpeech, setIsProcessingSpeech] = useState(false);
   const [replayEnabled, setReplayEnabled] = useState(false);
+  const [autoFollowMessages, setAutoFollowMessages] = useState(true);
   const sessionIdRef = useRef<string | null>(null);
   const portRef = useRef<chrome.runtime.Port | null>(null);
   const heartbeatIntervalRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const setInputTextRef = useRef<((text: string) => void) | null>(null);
   const streamingMessageRef = useRef<string>('');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -379,11 +381,15 @@ const SidePanel = () => {
 
     if (!streamedContent || !content) return false;
 
-    const finalMessage = { actor, content, timestamp };
+    const finalContent = content.includes(streamedContent) ? content : streamedContent;
+    const finalMessage = { actor, content: finalContent, timestamp };
     setMessages(prev => {
       const lastMessage = prev[prev.length - 1];
       if (lastMessage?.actor === actor && lastMessage.content === streamedContent) {
         return [...prev.slice(0, -1), finalMessage];
+      }
+      if (lastMessage?.actor === actor && lastMessage.content === content) {
+        return prev;
       }
       return [...prev, finalMessage];
     });
@@ -1065,11 +1071,23 @@ const SidePanel = () => {
     };
   }, [stopConnection]);
 
-  // Scroll to bottom when new messages arrive
-  // biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
+  const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    messagesEndRef.current?.scrollIntoView({ behavior });
+  }, []);
+
+  const handleMessagesScroll = useCallback(() => {
+    const element = messagesScrollRef.current;
+    if (!element) return;
+
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    setAutoFollowMessages(distanceFromBottom < 96);
+  }, []);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (autoFollowMessages) {
+      scrollMessagesToBottom('smooth');
+    }
+  }, [autoFollowMessages, messages, scrollMessagesToBottom]);
 
   const handleMicClick = async () => {
     if (isRecording) {
@@ -1375,9 +1393,25 @@ const SidePanel = () => {
                   </div>
                 )}
                 {messages.length > 0 && (
-                  <div className="scrollbar-gutter-stable flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth bg-bma-bg">
+                  <div
+                    ref={messagesScrollRef}
+                    onScroll={handleMessagesScroll}
+                    className="scrollbar-gutter-stable relative flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth bg-bma-bg">
                     <MessageList messages={messages} />
                     <div ref={messagesEndRef} />
+                    {!autoFollowMessages && showStopButton && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAutoFollowMessages(true);
+                          scrollMessagesToBottom();
+                        }}
+                        className="sticky bottom-4 left-1/2 z-20 mx-auto flex -translate-x-1/2 cursor-pointer items-center gap-2 overflow-hidden rounded-full border border-orange-300/30 bg-[#1a1410]/95 px-4 py-2 text-sm font-medium text-orange-100 shadow-lg shadow-black/30 transition-colors hover:border-orange-200/50 hover:bg-[#241a13]">
+                        <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/10 to-transparent motion-safe:animate-[shimmer_1.4s_infinite]" />
+                        <FiArrowDown className="relative size-4" />
+                        <span className="relative">Working...</span>
+                      </button>
+                    )}
                   </div>
                 )}
                 {messages.length > 0 && (

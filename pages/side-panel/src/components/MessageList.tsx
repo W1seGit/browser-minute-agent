@@ -1,6 +1,6 @@
 import type { Message as StorageMessage } from '@extension/storage';
 import { ACTOR_PROFILES } from '../types/message';
-import { memo } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { FiActivity, FiAlertTriangle, FiCheck, FiCompass, FiCpu, FiLoader } from 'react-icons/fi';
 import { Message as PromptMessage, MessageContent } from './prompt-kit/message';
 import {
@@ -252,6 +252,14 @@ function isOpenTraceStep(step: TraceStep, index: number, steps: TraceStep[], act
 
 function ReasoningStep({ step, active }: { step: Extract<TraceStep, { type: 'reasoning' }>; active: boolean }) {
   const tokenEstimate = Math.max(1, Math.ceil(step.text.trim().split(/\s+/).filter(Boolean).length * 1.3));
+  const contentRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    if (active && contentRef.current) {
+      contentRef.current.scrollTop = contentRef.current.scrollHeight;
+    }
+  }, [active, step.text]);
+
   return (
     <>
       <ChainOfThoughtTrigger
@@ -271,7 +279,9 @@ function ReasoningStep({ step, active }: { step: Extract<TraceStep, { type: 'rea
       </ChainOfThoughtTrigger>
       <ChainOfThoughtContent>
         <ChainOfThoughtItem>
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5">{step.text}</pre>
+          <pre ref={contentRef} className="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5">
+            {step.text}
+          </pre>
         </ChainOfThoughtItem>
       </ChainOfThoughtContent>
     </>

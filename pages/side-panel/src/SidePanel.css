@@ -107,6 +107,12 @@ code {
   scrollbar-gutter: stable;
 }
 
+@keyframes shimmer {
+  100% {
+    transform: translateX(220%);
+  }
+}
+
 .bg-bma-bg {
   background-color: var(--bma-bg);
 }
