@@ -1,26 +1,42 @@
 import type { Message as StorageMessage } from '@extension/storage';
 import { ACTOR_PROFILES } from '../types/message';
 import { memo } from 'react';
-import { FiCheckCircle, FiChevronDown, FiMousePointer, FiTerminal } from 'react-icons/fi';
+import { FiActivity, FiAlertTriangle, FiCheck, FiCompass, FiLoader } from 'react-icons/fi';
 import { Message as PromptMessage, MessageAvatar, MessageContent } from './prompt-kit/message';
-import { Steps, StepsBar, StepsContent, StepsItem, StepsTrigger } from './prompt-kit/steps';
+import {
+  ChainOfThought,
+  ChainOfThoughtContent,
+  ChainOfThoughtItem,
+  ChainOfThoughtStep,
+  ChainOfThoughtTrigger,
+} from './prompt-kit/chain-of-thought';
+import type { ToolPart } from './prompt-kit/tool';
 
 interface MessageListProps {
   messages: StorageMessage[];
-  isDarkMode?: boolean;
 }
 
-export default memo(function MessageList({ messages, isDarkMode = false }: MessageListProps) {
+export default memo(function MessageList({ messages }: MessageListProps) {
+  const items = buildDisplayItems(messages);
+
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-3 py-5">
-      {messages.map((message, index) => (
-        <MessageBlock
-          key={`${message.actor}-${message.timestamp}-${index}`}
-          message={message}
-          isSameActor={index > 0 ? messages[index - 1].actor === message.actor : false}
-          isDarkMode={isDarkMode}
-        />
-      ))}
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-3 py-5">
+      {items.map((item, index) => {
+        if (item.type === 'tools') {
+          return <ToolCallChain key={`tools-${item.calls[0]?.timestamp}-${index}`} calls={item.calls} />;
+        }
+
+        const previous = items[index - 1];
+        const isSameActor = previous?.type === 'message' && previous.message.actor === item.message.actor;
+
+        return (
+          <MessageBlock
+            key={`${item.message.actor}-${item.message.timestamp}-${index}`}
+            message={item.message}
+            isSameActor={isSameActor}
+          />
+        );
+      })}
     </div>
   );
 });
@@ -28,10 +44,9 @@ export default memo(function MessageList({ messages, isDarkMode = false }: Messa
 interface MessageBlockProps {
   message: StorageMessage;
   isSameActor: boolean;
-  isDarkMode?: boolean;
 }
 
-function MessageBlock({ message, isSameActor, isDarkMode = false }: MessageBlockProps) {
+function MessageBlock({ message, isSameActor }: MessageBlockProps) {
   if (!message.actor) {
     console.error('No actor found');
     return <div />;
@@ -39,36 +54,27 @@ function MessageBlock({ message, isSameActor, isDarkMode = false }: MessageBlock
   const actor = ACTOR_PROFILES[message.actor as keyof typeof ACTOR_PROFILES];
   const isProgress = message.content === 'Showing progress...';
   const isUser = message.actor === 'user';
-  const toolCall = parseToolCall(message.content);
-
-  if (toolCall && !isUser) {
-    return <ToolCallStep call={toolCall} timestamp={message.timestamp} />;
-  }
 
   return (
     <PromptMessage className={`max-w-full ${isUser ? 'justify-end' : 'justify-start'}`}>
       {!isUser && !isSameActor && (
-        <MessageAvatar
-          src={actor.icon}
-          alt={actor.name}
-          fallback="AI"
-          className="border border-white/10 bg-[#151b23]"
-        />
+        <MessageAvatar src={actor.icon} alt={actor.name} fallback="AI" className="border border-zinc-800 bg-zinc-950" />
       )}
       {!isUser && isSameActor && <div className="w-8 shrink-0" />}
 
       <div className={`min-w-0 ${isUser ? 'max-w-[84%]' : 'max-w-[calc(100%-2.75rem)] flex-1'}`}>
         {!isSameActor && (
           <div
-            className={`mb-1 text-[11px] font-medium uppercase tracking-[0.14em] text-[#7d8794] ${isUser ? 'text-right' : 'text-left'}`}>
+            className={`mb-1 text-[11px] font-medium uppercase text-zinc-500 ${isUser ? 'text-right' : 'text-left'}`}>
             {isUser ? 'You' : actor.name}
           </div>
         )}
 
         {isProgress ? (
-          <MessageContent className="border border-white/10 bg-[#111820] text-white">
-            <div className="h-1 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full animate-progress bg-[#6ee7d8]" />
+          <MessageContent className="border border-zinc-800 bg-[#111113] text-zinc-100">
+            <div className="flex items-center gap-2 text-sm text-zinc-400">
+              <FiActivity className="size-4 animate-pulse text-sky-300" />
+              <span>Working through the next browser step</span>
             </div>
           </MessageContent>
         ) : (
@@ -76,14 +82,14 @@ function MessageBlock({ message, isSameActor, isDarkMode = false }: MessageBlock
             markdown
             className={`bma-markdown border shadow-sm ${
               isUser
-                ? 'bma-markdown-user border-[#6ee7d8]/25 bg-[#6ee7d8] text-[#062b28]'
-                : 'border-white/10 bg-[#111820] text-[#e7eef7]'
+                ? 'bma-markdown-user border-orange-300/30 bg-zinc-100 text-zinc-950'
+                : 'border-zinc-800 bg-[#111113] text-zinc-100'
             }`}>
             {message.content}
           </MessageContent>
         )}
         {!isProgress && (
-          <div className={`mt-1 text-xs text-[#7d8794] ${isUser ? 'text-right' : 'text-left'}`}>
+          <div className={`mt-1 text-xs text-zinc-500 ${isUser ? 'text-right' : 'text-left'}`}>
             {formatTimestamp(message.timestamp)}
           </div>
         )}
@@ -93,65 +99,192 @@ function MessageBlock({ message, isSameActor, isDarkMode = false }: MessageBlock
 }
 
 type ToolCall = {
+  id?: string;
   name: string;
-  label: string;
-  details: string;
+  state: ToolPart['state'];
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  errorText?: string;
+  rawText?: string;
+  timestamp: number;
 };
 
-function parseToolCall(content: string): ToolCall | null {
-  const match = content.match(/^([a-zA-Z_][\w-]*):\s*([\s\S]+)$/);
-  if (!match) return null;
+const TOOL_MESSAGE_PREFIX = '__bma_tool_call__:';
 
-  const [, name, rawDetails] = match;
-  if (!name.includes('_') && !rawDetails.trim().startsWith('{')) return null;
+type DisplayItem = { type: 'message'; message: StorageMessage } | { type: 'tools'; calls: ToolCall[] };
 
-  let label = name
-    .split(/[_-]/)
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-  let details = rawDetails.trim();
+function buildDisplayItems(messages: StorageMessage[]): DisplayItem[] {
+  const items: DisplayItem[] = [];
+  let toolGroup: ToolCall[] = [];
 
-  try {
-    const parsed = JSON.parse(details);
-    label = parsed.intent || parsed.text || label;
-    details = Object.entries(parsed)
-      .filter(([key]) => key !== 'intent')
-      .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`)
-      .join('\n');
-  } catch {
-    // Keep raw details when the action payload is not JSON.
-  }
+  const flushTools = () => {
+    if (toolGroup.length > 0) {
+      const collapsed = collapseToolCalls(toolGroup);
+      if (collapsed.length > 0) {
+        items.push({ type: 'tools', calls: collapsed });
+      }
+      toolGroup = [];
+    }
+  };
 
-  return { name, label, details };
+  messages.forEach(message => {
+    const toolCall = message.actor !== 'user' ? parseToolCall(message.content, message.timestamp) : null;
+
+    if (toolCall) {
+      if (toolCall.name !== 'done' && toolCall.name !== 'browser_action') {
+        toolGroup.push(toolCall);
+      }
+      return;
+    }
+
+    flushTools();
+    items.push({ type: 'message', message });
+  });
+
+  flushTools();
+  return items;
 }
 
-function ToolCallStep({ call, timestamp }: { call: ToolCall; timestamp: number }) {
+function collapseToolCalls(calls: ToolCall[]): ToolCall[] {
+  const collapsed: ToolCall[] = [];
+  const indexByKey = new Map<string, number>();
+
+  calls.forEach(call => {
+    if (call.name === 'browser_action') return;
+
+    const key = getToolCallKey(call);
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex === undefined) {
+      indexByKey.set(key, collapsed.length);
+      collapsed.push(call);
+      return;
+    }
+
+    const existing = collapsed[existingIndex];
+    collapsed[existingIndex] = {
+      ...existing,
+      ...call,
+      input: call.input ?? existing.input,
+      output: call.output ?? existing.output,
+      errorText: call.errorText ?? existing.errorText,
+      timestamp: call.timestamp,
+    };
+  });
+
+  return collapsed;
+}
+
+function getToolCallKey(call: ToolCall) {
+  if (call.id) return call.id;
+  return `${call.name}:${stableStringify(call.input ?? {})}`;
+}
+
+function parseToolCall(content: string, timestamp: number): ToolCall | null {
+  if (content.startsWith(TOOL_MESSAGE_PREFIX)) {
+    try {
+      const parsed = JSON.parse(content.slice(TOOL_MESSAGE_PREFIX.length)) as Omit<ToolCall, 'timestamp'>;
+      return { ...parsed, name: normalizeToolName(parsed.name), timestamp };
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, nestedValue]) => `${JSON.stringify(key)}:${stableStringify(nestedValue)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function ToolCallChain({ calls }: { calls: ToolCall[] }) {
   return (
-    <div className="mx-auto w-full max-w-3xl px-3">
-      <Steps defaultOpen={false} className="rounded-2xl border border-white/10 bg-[#0f151d] px-3 py-2">
-        <StepsTrigger
-          leftIcon={
-            call.name.includes('click') ? <FiMousePointer className="size-4" /> : <FiTerminal className="size-4" />
-          }
-          className="min-w-0 text-[#d6e0ea]">
-          <span className="min-w-0 flex-1 truncate text-left">{call.label}</span>
-          <span className="ml-auto hidden shrink-0 items-center gap-1 text-xs text-[#7d8794] min-[420px]:flex">
-            <FiCheckCircle className="size-3.5 text-[#55d98f]" />
-            {formatTimestamp(timestamp)}
-          </span>
-          <FiChevronDown className="size-4 shrink-0 text-[#7d8794]" />
-        </StepsTrigger>
-        <StepsContent bar={<StepsBar className="bg-[#2c3744]" />}>
-          <StepsItem className="text-xs text-[#7d8794]">{call.name}</StepsItem>
-          {call.details && (
-            <StepsItem className="whitespace-pre-wrap rounded-xl bg-[#090d12] p-3 font-mono text-xs text-[#b9c5d1]">
-              {call.details}
-            </StepsItem>
-          )}
-        </StepsContent>
-      </Steps>
+    <div className="mx-auto w-full max-w-3xl px-1 py-1">
+      <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase text-zinc-500">
+        <FiCompass className="size-3.5" />
+        Browser actions
+        <span className="ml-auto normal-case text-zinc-600">{formatTimestamp(calls[calls.length - 1].timestamp)}</span>
+      </div>
+      <ChainOfThought className="pl-1">
+        {calls.map((call, index) => (
+          <ChainOfThoughtStep key={`${call.name}-${call.timestamp}-${index}`} isLast={index === calls.length - 1}>
+            <ChainOfThoughtTrigger leftIcon={getToolIcon(call)}>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate">{formatToolName(call.name)}</span>
+                <span className={`shrink-0 text-[11px] ${getToolStatusClass(call.state)}`}>
+                  {getToolStatusLabel(call.state)}
+                </span>
+              </span>
+            </ChainOfThoughtTrigger>
+            {hasToolDetails(call) && (
+              <ChainOfThoughtContent>
+                <ChainOfThoughtItem>
+                  <ToolDetails call={call} />
+                </ChainOfThoughtItem>
+              </ChainOfThoughtContent>
+            )}
+          </ChainOfThoughtStep>
+        ))}
+      </ChainOfThought>
     </div>
   );
+}
+
+function ToolDetails({ call }: { call: ToolCall }) {
+  if (call.errorText) return <div className="text-rose-300">{call.errorText}</div>;
+
+  const value = call.output ?? call.input;
+  if (!value) return null;
+
+  return <pre className="max-h-40 overflow-auto whitespace-pre-wrap font-mono">{JSON.stringify(value, null, 2)}</pre>;
+}
+
+function hasToolDetails(call: ToolCall) {
+  return Boolean(call.input || call.output || call.errorText);
+}
+
+function getToolIcon(call: ToolCall) {
+  if (call.state === 'output-error') return <FiAlertTriangle className="size-3.5 text-rose-400" />;
+  if (call.state === 'input-streaming') return <FiLoader className="size-3.5 animate-spin text-sky-400" />;
+  if (call.state === 'output-available') return <FiCheck className="size-3.5 text-emerald-400" />;
+  return <FiCompass className="size-3.5" />;
+}
+
+function getToolStatusLabel(state: ToolPart['state']) {
+  if (state === 'input-streaming') return 'running';
+  if (state === 'output-error') return 'failed';
+  if (state === 'output-available') return 'done';
+  return 'ready';
+}
+
+function getToolStatusClass(state: ToolPart['state']) {
+  if (state === 'input-streaming') return 'text-sky-300';
+  if (state === 'output-error') return 'text-rose-300';
+  if (state === 'output-available') return 'text-emerald-300';
+  return 'text-zinc-500';
+}
+
+function normalizeToolName(name: string) {
+  return name
+    .replace(/^tool-/, '')
+    .trim()
+    .toLowerCase();
+}
+
+function formatToolName(name: string) {
+  return name
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 /**

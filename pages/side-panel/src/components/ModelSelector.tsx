@@ -162,18 +162,16 @@ export default function ModelSelector({ onModelConfigured }: ModelSelectorProps)
       <button
         type="button"
         onClick={() => setIsOpen(value => !value)}
-        className="flex max-w-[220px] cursor-pointer items-center gap-2 rounded-full border border-bma-border bg-bma-surface px-3 py-1.5 text-sm text-bma-text transition-colors hover:bg-bma-elevated"
+        className="flex max-w-[220px] cursor-pointer items-center gap-2 rounded-md border border-zinc-800 bg-[#111113] px-3 py-1.5 text-sm text-zinc-200 transition-colors hover:border-zinc-700 hover:bg-zinc-900"
         title={currentLabel}>
-        <span className="size-1.5 rounded-full bg-bma-accent" />
+        <span className="size-1.5 rounded-full bg-orange-300" />
         <span className="truncate">{currentLabel}</span>
       </button>
 
       {isOpen && (
-        <div className="absolute bottom-full right-0 z-30 mb-3 w-[340px] overflow-hidden rounded-2xl border border-bma-border bg-bma-bg-soft text-bma-text shadow-2xl shadow-black/60">
-          <div className="border-b border-bma-border p-3">
-            <label
-              className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-bma-muted"
-              htmlFor="model-search">
+        <div className="absolute bottom-full right-0 z-30 mb-3 w-[340px] overflow-hidden rounded-lg border border-zinc-800 bg-[#111113] text-zinc-100 shadow-2xl shadow-black/60">
+          <div className="border-b border-zinc-800 p-3">
+            <label className="mb-1.5 block text-[11px] font-medium uppercase text-zinc-500" htmlFor="model-search">
               Models
             </label>
             <input
@@ -181,20 +179,18 @@ export default function ModelSelector({ onModelConfigured }: ModelSelectorProps)
               value={query}
               onChange={event => setQuery(event.target.value)}
               placeholder="Search configured models"
-              className="w-full rounded-xl border border-bma-border bg-bma-surface px-3 py-2 text-sm text-bma-text outline-none transition-colors placeholder:text-bma-muted"
+              className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none transition-colors placeholder:text-zinc-600 focus:border-orange-300/60"
             />
           </div>
 
           <div className="p-2">
             <div className="flex items-center justify-between px-2 pb-2 pt-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-bma-muted">
-                Configured providers
-              </span>
-              <span className="max-w-[180px] truncate text-xs text-bma-muted">{modelOptions.length} models</span>
+              <span className="text-[11px] font-medium uppercase text-zinc-500">Configured providers</span>
+              <span className="max-w-[180px] truncate text-xs text-zinc-500">{modelOptions.length} models</span>
             </div>
             <div className="max-h-64 overflow-y-auto pr-1">
               {filteredModels.length === 0 ? (
-                <div className="rounded-xl border border-bma-border bg-bma-surface px-3 py-5 text-center text-sm text-bma-muted">
+                <div className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-5 text-center text-sm text-zinc-500">
                   Configure a provider in settings first.
                 </div>
               ) : (
@@ -207,15 +203,14 @@ export default function ModelSelector({ onModelConfigured }: ModelSelectorProps)
                       type="button"
                       disabled={isSaving}
                       onClick={() => saveModel(option)}
-                      className={`mb-1 flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
+                      className={`mb-1 flex w-full cursor-pointer items-center justify-between rounded-md px-3 py-2.5 text-left text-sm transition-colors ${
                         isSelected
-                          ? 'bg-bma-accent text-bma-accentText'
-                          : 'text-bma-subtle hover:bg-bma-surface hover:text-bma-text'
+                          ? 'bg-orange-300 text-zinc-950'
+                          : 'text-zinc-300 hover:bg-zinc-950 hover:text-zinc-100'
                       } disabled:cursor-wait disabled:opacity-60`}>
                       <span className="min-w-0">
                         <span className="block truncate">{option.model}</span>
-                        <span
-                          className={`block truncate text-xs ${isSelected ? 'text-teal-950/70' : 'text-bma-muted'}`}>
+                        <span className={`block truncate text-xs ${isSelected ? 'text-zinc-800' : 'text-zinc-500'}`}>
                           {option.providerName}
                         </span>
                       </span>

@@ -1150,8 +1150,10 @@ export default class Page {
         return false;
       });
 
-      // Choose appropriate input method based on element properties
-      if ((isContentEditable || tagName === 'input') && !isReadOnly && !isDisabled) {
+      // Choose appropriate input method based on element properties.
+      // Code editors often expose a div wrapper that focuses a hidden textarea. If the
+      // target is not directly editable, focus it and type through the page keyboard.
+      if ((isContentEditable || tagName === 'input' || tagName === 'textarea') && !isReadOnly && !isDisabled) {
         // Clear content and set value directly
         await element.evaluate(el => {
           if (el instanceof HTMLElement) {
@@ -1165,20 +1167,35 @@ export default class Page {
           el.dispatchEvent(new Event('change', { bubbles: true }));
         });
 
-        // Type the text with a small delay between keypresses
-        await element.type(text, { delay: 50 });
-      } else {
+        await element.evaluate((el, value) => {
+          if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+            el.value = value;
+          } else if (el instanceof HTMLElement) {
+            el.textContent = value;
+          }
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }, text);
+      } else if (tagName === 'select') {
         // Use direct value setting for other types of elements
         await element.evaluate((el, value) => {
           if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
             el.value = value;
-          } else if (el instanceof HTMLElement && el.isContentEditable) {
-            el.textContent = value;
           }
           // Dispatch events
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
         }, text);
+      } else {
+        await element.click();
+        const inserted = await this._puppeteerPage.evaluate(value => {
+          const activeElement = document.activeElement;
+          if (!activeElement) return false;
+          return document.execCommand('insertText', false, value);
+        }, text);
+        if (!inserted) {
+          await this._puppeteerPage.keyboard.type(text, { delay: 0 });
+        }
       }
 
       // Wait for page stability after input

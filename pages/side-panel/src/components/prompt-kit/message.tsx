@@ -22,7 +22,7 @@ export type MessageAvatarProps = {
 export const MessageAvatar = ({ src, alt, fallback, className }: MessageAvatarProps) => (
   <div
     className={cn(
-      'flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#1a222c] text-xs font-semibold text-white',
+      'flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[#111113] text-xs font-semibold text-white',
       className,
     )}>
     {src ? <img src={src} alt={alt} className="size-full object-cover" /> : fallback}
@@ -36,7 +36,7 @@ export type MessageContentProps = {
 } & React.HTMLProps<HTMLDivElement>;
 
 export const MessageContent = ({ children, markdown = false, className, ...props }: MessageContentProps) => {
-  const classNames = cn('break-words whitespace-normal rounded-2xl px-4 py-3 text-[15px] leading-7', className);
+  const classNames = cn('break-words whitespace-normal rounded-lg px-4 py-3 text-[15px] leading-7', className);
 
   return markdown ? (
     <Markdown className={classNames} {...props}>

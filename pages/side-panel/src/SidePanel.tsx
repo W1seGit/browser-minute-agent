@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { FiSettings } from 'react-icons/fi';
+import { FiArrowLeft, FiClock, FiSettings } from 'react-icons/fi';
 import { PiPlusBold } from 'react-icons/pi';
 import { GrHistory } from 'react-icons/gr';
 import {
@@ -28,6 +28,140 @@ declare global {
   }
 }
 
+const TOOL_MESSAGE_PREFIX = '__bma_tool_call__:';
+
+type ParsedToolDetails = {
+  id?: string;
+  name: string;
+  input?: unknown;
+  output?: unknown;
+  errorText?: string;
+};
+
+function parseToolMessageContent(content: string) {
+  if (!content.startsWith(TOOL_MESSAGE_PREFIX)) return null;
+  try {
+    return JSON.parse(content.slice(TOOL_MESSAGE_PREFIX.length)) as {
+      id?: string;
+      name: string;
+      state: string;
+      input?: unknown;
+      output?: unknown;
+      errorText?: string;
+      rawText?: string;
+    };
+  } catch {
+    return null;
+  }
+}
+
+function createToolMessageContent(
+  state: ExecutionState.ACT_START | ExecutionState.ACT_OK | ExecutionState.ACT_FAIL,
+  details = '',
+) {
+  if (isDoneAction(details)) return null;
+
+  const toolState =
+    state === ExecutionState.ACT_START
+      ? 'input-streaming'
+      : state === ExecutionState.ACT_FAIL
+        ? 'output-error'
+        : 'output-available';
+  const parsed = parseToolDetails(details);
+  if (!parsed) return null;
+
+  return `${TOOL_MESSAGE_PREFIX}${JSON.stringify({
+    name: parsed.name,
+    id: parsed.id,
+    state: toolState,
+    input: parsed.input,
+    output: toolState === 'output-available' ? parsed.output : undefined,
+    errorText: toolState === 'output-error' ? parsed.errorText : undefined,
+    rawText: details,
+  })}`;
+}
+
+function isDoneAction(details: string) {
+  const trimmed = details.trim().toLowerCase();
+  return (
+    trimmed === 'done' ||
+    trimmed === 'done completed' ||
+    trimmed === 'done failed' ||
+    trimmed.startsWith('done:') ||
+    trimmed.startsWith('done ')
+  );
+}
+
+function parseToolDetails(details: string): ParsedToolDetails | null {
+  const match = details.match(/^([a-zA-Z_][\w-]*):\s*([\s\S]+)$/);
+  if (match) {
+    const [, name, rawPayload] = match;
+    try {
+      return {
+        name,
+        ...normalizeToolPayload(JSON.parse(rawPayload)),
+      };
+    } catch {
+      return {
+        name,
+        input: { details: rawPayload.trim() },
+        output: undefined,
+        errorText: undefined,
+      };
+    }
+  }
+
+  const completed = details.match(/^([a-zA-Z_][\w-]*) completed$/);
+  if (completed) {
+    return {
+      name: completed[1],
+      input: undefined,
+      output: { status: details },
+      errorText: undefined,
+    };
+  }
+
+  const failed = details.match(/^([a-zA-Z_][\w-]*) failed$/);
+  if (failed) {
+    return {
+      name: failed[1],
+      input: undefined,
+      output: undefined,
+      errorText: details,
+    };
+  }
+
+  return null;
+}
+
+function normalizeToolPayload(payload: unknown) {
+  if (!payload || typeof payload !== 'object') {
+    return {
+      input: payload,
+      output: undefined,
+      errorText: undefined,
+    };
+  }
+
+  const record = payload as Record<string, unknown>;
+  const legacyInput =
+    record.input === undefined && record.result === undefined && record.error === undefined
+      ? Object.fromEntries(Object.entries(record).filter(([key]) => key !== 'toolCallId'))
+      : undefined;
+
+  return {
+    id: typeof record.toolCallId === 'string' ? record.toolCallId : undefined,
+    input:
+      record.input && typeof record.input === 'object'
+        ? (record.input as Record<string, unknown>)
+        : legacyInput && Object.keys(legacyInput).length > 0
+          ? legacyInput
+          : undefined,
+    output: record.result !== undefined ? { result: record.result } : undefined,
+    errorText: typeof record.error === 'string' ? record.error : undefined,
+  };
+}
+
 const SidePanel = () => {
   const progressMessage = 'Showing progress...';
   const [messages, setMessages] = useState<Message[]>([]);
@@ -41,10 +175,8 @@ const SidePanel = () => {
   const [hasProviders, setHasProviders] = useState<boolean | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessingSpeech, setIsProcessingSpeech] = useState(false);
-  const [isReplaying, setIsReplaying] = useState(false);
   const [replayEnabled, setReplayEnabled] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
-  const isReplayingRef = useRef<boolean>(false);
   const portRef = useRef<chrome.runtime.Port | null>(null);
   const heartbeatIntervalRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -111,16 +243,35 @@ const SidePanel = () => {
     sessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
 
-  useEffect(() => {
-    isReplayingRef.current = isReplaying;
-  }, [isReplaying]);
-
   const appendMessage = useCallback((newMessage: Message, sessionId?: string | null) => {
     // Don't save progress messages
     const isProgressMessage = newMessage.content === progressMessage;
+    const newToolMessage = parseToolMessageContent(newMessage.content);
 
     setMessages(prev => {
       const filteredMessages = prev.filter((msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1));
+      if (newToolMessage && newToolMessage.state !== 'input-streaming') {
+        let replaceIndex = -1;
+        for (let index = filteredMessages.length - 1; index >= 0; index -= 1) {
+          const existingToolMessage = parseToolMessageContent(filteredMessages[index].content);
+          const sameToolCall =
+            newToolMessage.id && existingToolMessage?.id
+              ? existingToolMessage.id === newToolMessage.id
+              : existingToolMessage?.name === newToolMessage.name && existingToolMessage.state === 'input-streaming';
+          if (sameToolCall) {
+            replaceIndex = index;
+            break;
+          }
+        }
+
+        if (replaceIndex >= 0) {
+          return [
+            ...filteredMessages.slice(0, replaceIndex),
+            newMessage,
+            ...filteredMessages.slice(replaceIndex + 1),
+          ];
+        }
+      }
       return [...filteredMessages, newMessage];
     });
 
@@ -140,14 +291,16 @@ const SidePanel = () => {
   const appendStreamDelta = useCallback((actor: Actors, delta: string, timestamp: number) => {
     if (!delta) return;
 
-    streamingMessageRef.current += delta;
-    const content = streamingMessageRef.current;
-
     setMessages(prev => {
       const filteredMessages = prev.filter((msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1));
       const lastMessage = filteredMessages[filteredMessages.length - 1];
+      const previousContent = lastMessage?.actor === actor && lastMessage.content === streamingMessageRef.current
+        ? streamingMessageRef.current
+        : '';
+      const content = previousContent + delta;
+      streamingMessageRef.current = content;
 
-      if (lastMessage?.actor === actor && lastMessage.content === content.slice(0, -delta.length)) {
+      if (lastMessage?.actor === actor && lastMessage.content === previousContent) {
         return [
           ...filteredMessages.slice(0, -1),
           {
@@ -212,7 +365,6 @@ const SidePanel = () => {
               setIsFollowUpMode(true);
               setInputEnabled(true);
               setShowStopButton(false);
-              setIsReplaying(false);
               if (finalizeStreamingMessage(actor, content, timestamp)) return;
               skip = !content;
               break;
@@ -220,14 +372,12 @@ const SidePanel = () => {
               setIsFollowUpMode(true);
               setInputEnabled(true);
               setShowStopButton(false);
-              setIsReplaying(false);
               skip = false;
               break;
             case ExecutionState.TASK_CANCEL:
               setIsFollowUpMode(false);
               setInputEnabled(true);
               setShowStopButton(false);
-              setIsReplaying(false);
               skip = false;
               break;
             case ExecutionState.TASK_PAUSE:
@@ -251,7 +401,6 @@ const SidePanel = () => {
               setIsFollowUpMode(true);
               setInputEnabled(true);
               setShowStopButton(false);
-              setIsReplaying(false);
               if (finalizeStreamingMessage(actor, content, timestamp)) return;
               skip = !content;
               break;
@@ -259,14 +408,12 @@ const SidePanel = () => {
               setIsFollowUpMode(true);
               setInputEnabled(true);
               setShowStopButton(false);
-              setIsReplaying(false);
               skip = false;
               break;
             case ExecutionState.TASK_CANCEL:
               setIsFollowUpMode(false);
               setInputEnabled(true);
               setShowStopButton(false);
-              setIsReplaying(false);
               skip = false;
               break;
             case ExecutionState.STEP_START:
@@ -284,16 +431,40 @@ const SidePanel = () => {
               break;
             case ExecutionState.ACT_START:
               if (content !== 'cache_content' && content !== 'done') {
-                // skip to display caching content
-                skip = false;
+                const toolMessage = createToolMessageContent(state, content);
+                if (toolMessage) {
+                  appendMessage({
+                    actor,
+                    content: toolMessage,
+                    timestamp,
+                  });
+                }
               }
-              break;
+              return;
             case ExecutionState.ACT_OK:
-              skip = !isReplayingRef.current;
-              break;
+              if (content && content !== 'done') {
+                const toolMessage = createToolMessageContent(state, content);
+                if (toolMessage) {
+                  appendMessage({
+                    actor,
+                    content: toolMessage,
+                    timestamp,
+                  });
+                }
+              }
+              return;
             case ExecutionState.ACT_FAIL:
-              skip = false;
-              break;
+              {
+                const toolMessage = createToolMessageContent(state, content);
+                if (toolMessage) {
+                  appendMessage({
+                    actor,
+                    content: toolMessage,
+                    timestamp,
+                  });
+                }
+              }
+              return;
             case ExecutionState.STREAM_THINKING:
               skip = true;
               break;
@@ -541,7 +712,6 @@ const SidePanel = () => {
         content: t('chat_replay_starting', historyData.task),
         timestamp: Date.now(),
       });
-      setIsReplaying(true);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       appendMessage({
@@ -828,46 +998,6 @@ const SidePanel = () => {
     }
   };
 
-  const handleBookmarkSelect = (content: string) => {
-    if (setInputTextRef.current) {
-      setInputTextRef.current(content);
-    }
-  };
-
-  const handleBookmarkUpdateTitle = async (id: number, title: string) => {
-    try {
-      await favoritesStorage.updatePromptTitle(id, title);
-
-      // Update favorites in the UI
-      await favoritesStorage.getAllPrompts();
-    } catch (error) {
-      console.error('Failed to update favorite prompt title:', error);
-    }
-  };
-
-  const handleBookmarkDelete = async (id: number) => {
-    try {
-      await favoritesStorage.removePrompt(id);
-
-      // Update favorites in the UI
-      await favoritesStorage.getAllPrompts();
-    } catch (error) {
-      console.error('Failed to delete favorite prompt:', error);
-    }
-  };
-
-  const handleBookmarkReorder = async (draggedId: number, targetId: number) => {
-    try {
-      // Directly pass IDs to storage function - it now handles the reordering logic
-      await favoritesStorage.reorderPrompts(draggedId, targetId);
-
-      // Fetch the updated list from storage to get the new IDs and reflect the authoritative order
-      await favoritesStorage.getAllPrompts();
-    } catch (error) {
-      console.error('Failed to reorder favorite prompts:', error);
-    }
-  };
-
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -1056,21 +1186,30 @@ const SidePanel = () => {
 
   return (
     <div className="bg-bma-bg text-bma-text">
-      <div className="flex h-screen flex-col overflow-hidden bg-bma-bg text-bma-text">
+      <div className="side-panel-shell flex h-screen flex-col overflow-hidden bg-bma-bg text-bma-text">
         <header className="header relative">
-          <div className="header-logo min-w-0 flex-1 gap-2">
+          <div className="header-logo min-w-0 flex-1 gap-3">
             {showHistory ? (
               <button
                 type="button"
                 onClick={() => handleBackToChat(false)}
-                className="cursor-pointer text-sm text-white/75 hover:text-white"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-100"
                 aria-label={t('nav_back_a11y')}>
+                <FiArrowLeft className="size-4" />
                 {t('nav_back')}
               </button>
             ) : (
-              <div className="flex items-center gap-2">
-                <span className="size-2 rounded-full bg-bma-accent" />
-                <span className="text-sm font-semibold text-bma-text">min-agent</span>
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid size-8 shrink-0 place-items-center rounded-md border border-zinc-800 bg-zinc-950 text-xs font-semibold text-orange-300">
+                  bm
+                </div>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-zinc-100">browser minute</div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                    <span className="size-1.5 rounded-full bg-emerald-400" />
+                    min-agent
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -1125,7 +1264,7 @@ const SidePanel = () => {
             {hasProviders === null && (
               <div className="flex flex-1 items-center justify-center p-8 text-bma-muted">
                 <div className="text-center">
-                  <div className="mx-auto mb-4 size-8 animate-spin rounded-full border-2 border-bma-border border-t-bma-accent"></div>
+                  <div className="mx-auto mb-4 size-8 animate-spin rounded-full border-2 border-zinc-800 border-t-orange-300"></div>
                   <p>{t('status_checkingConfig')}</p>
                 </div>
               </div>
@@ -1133,15 +1272,15 @@ const SidePanel = () => {
 
             {/* Show setup message when no models are configured */}
             {hasProviders === false && (
-              <div className="flex flex-1 items-center justify-center p-8 text-bma-muted">
-                <div className="max-w-md text-center">
-                  <h3 className="mb-2 text-lg font-semibold text-bma-text">Add a provider</h3>
-                  <p className="mb-4 text-sm text-bma-muted">
+              <div className="flex flex-1 items-center justify-center p-6 text-bma-muted">
+                <div className="max-w-md rounded-xl border border-zinc-800 bg-[#111113] p-5 text-center shadow-xl shadow-black/20">
+                  <h3 className="mb-2 text-lg font-semibold text-zinc-100">Add a provider</h3>
+                  <p className="mb-4 text-sm text-zinc-400">
                     Connect a provider in settings, then pick a model next to the input.
                   </p>
                   <button
                     onClick={() => chrome.runtime.openOptionsPage()}
-                    className="my-4 rounded-lg bg-bma-accent px-4 py-2 text-sm font-semibold text-bma-accentText transition hover:brightness-110">
+                    className="my-2 cursor-pointer rounded-md bg-orange-300 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-orange-200">
                     Open settings
                   </button>
                 </div>
@@ -1154,8 +1293,17 @@ const SidePanel = () => {
                 {messages.length === 0 && (
                   <div className="flex flex-1 items-center justify-center bg-bma-bg p-4">
                     <div className="w-full max-w-2xl">
+                      <div className="mb-5 text-center">
+                        <div className="mx-auto mb-3 grid size-11 place-items-center rounded-lg border border-zinc-800 bg-[#111113] text-orange-300">
+                          <FiClock className="size-5" />
+                        </div>
+                        <h1 className="text-xl font-semibold text-zinc-100">What should the browser do?</h1>
+                        <p className="mt-1 text-sm text-zinc-500">
+                          Tool calls and page actions will appear as structured run cards.
+                        </p>
+                      </div>
                       <div className="mb-3 flex items-center justify-between px-1">
-                        <span className="text-xs uppercase tracking-wide text-bma-muted">Model</span>
+                        <span className="text-xs font-medium uppercase text-zinc-500">Model</span>
                         <ModelSelector onModelConfigured={checkModelConfiguration} />
                       </div>
                       <ChatInput
@@ -1169,7 +1317,6 @@ const SidePanel = () => {
                         setContent={setter => {
                           setInputTextRef.current = setter;
                         }}
-                        isDarkMode={true}
                         historicalSessionId={isHistoricalSession && replayEnabled ? currentSessionId : null}
                         onReplay={handleReplay}
                       />
@@ -1178,14 +1325,14 @@ const SidePanel = () => {
                 )}
                 {messages.length > 0 && (
                   <div className="scrollbar-gutter-stable flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth bg-bma-bg">
-                    <MessageList messages={messages} isDarkMode={true} />
+                    <MessageList messages={messages} />
                     <div ref={messagesEndRef} />
                   </div>
                 )}
                 {messages.length > 0 && (
-                  <div className="border-t border-bma-border bg-bma-bg-soft p-3">
+                  <div className="composer-dock border-t border-zinc-800 bg-bma-bg-soft p-3">
                     <div className="mb-2 flex items-center justify-between px-1">
-                      <span className="text-xs uppercase tracking-wide text-bma-muted">Model</span>
+                      <span className="text-xs font-medium uppercase text-zinc-500">Model</span>
                       <ModelSelector onModelConfigured={checkModelConfiguration} />
                     </div>
                     <ChatInput
@@ -1199,7 +1346,6 @@ const SidePanel = () => {
                       setContent={setter => {
                         setInputTextRef.current = setter;
                       }}
-                      isDarkMode={true}
                       historicalSessionId={isHistoricalSession && replayEnabled ? currentSessionId : null}
                       onReplay={handleReplay}
                     />

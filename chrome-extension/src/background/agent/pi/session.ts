@@ -236,6 +236,14 @@ async function waitIfPaused(context: AgentContext, signal?: AbortSignal): Promis
   }
 }
 
+function isUnderspecifiedTypingTask(task: string): boolean {
+  const normalized = task.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!/^(type|enter|write|fill)\b/.test(normalized)) return false;
+  if (/["'`].+["'`]/.test(task)) return false;
+  if (/\b(type|enter|write|fill)\s+.+\s+(in|into|inside|on)\b/i.test(task)) return false;
+  return /\b(in|into|inside|on)?\s*(the\s+)?(ide|editor|input|field|box|thing|page)\b/.test(normalized);
+}
+
 export async function createPiAgent(options: PiSessionOptions): Promise<PiSession> {
   const { task, taskId, browserContext, providerConfig, modelConfig, agentOptions } = options;
 
@@ -259,6 +267,7 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
   const thinkingLevel = modelConfig.reasoningEffort ?? 'medium';
   let finalSuccess = true;
   let terminalFailure: string | null = null;
+  const underspecifiedTypingTask = isUnderspecifiedTypingTask(task);
 
   // Create tools bound to the runtime context
   const toolCtx: PiToolContext = {
@@ -285,11 +294,18 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
         ...piStreamOptions,
       } as SimpleStreamOptions),
     toolExecution: 'sequential',
-    beforeToolCall: async (_toolContext, signal) => {
+    beforeToolCall: async ({ toolCall }, signal) => {
       await waitIfPaused(context, signal);
       if (context.stopped || signal?.aborted) {
         return { block: true, reason: 'Task cancelled' };
       }
+      if (underspecifiedTypingTask && toolCall.name !== 'done') {
+        return {
+          block: true,
+          reason: 'The user asked to type into a page, but did not provide the exact text. Ask the user what to type.',
+        };
+      }
+
       return undefined;
     },
   });
@@ -367,7 +383,7 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
         await context.emitEvent(
           Actors.NAVIGATOR,
           ExecutionState.ACT_START,
-          `${event.toolName}: ${JSON.stringify(event.args)}`,
+          `${event.toolName}: ${JSON.stringify({ toolCallId: event.toolCallId, input: event.args })}`,
         );
         break;
       }
@@ -375,14 +391,28 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
       case 'tool_execution_end': {
         if (event.isError) {
           context.consecutiveFailures += 1;
-          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, `${event.toolName} failed`);
+          await context.emitEvent(
+            Actors.NAVIGATOR,
+            ExecutionState.ACT_FAIL,
+            `${event.toolName}: ${JSON.stringify({
+              toolCallId: event.toolCallId,
+              error: extractToolResultText(event.result) || `${event.toolName} failed`,
+            })}`,
+          );
           if (context.consecutiveFailures >= context.options.maxFailures) {
             terminalFailure = `Max failures reached (${context.options.maxFailures})`;
             agent.abort();
           }
         } else {
           context.consecutiveFailures = 0;
-          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, `${event.toolName} completed`);
+          await context.emitEvent(
+            Actors.NAVIGATOR,
+            ExecutionState.ACT_OK,
+            `${event.toolName}: ${JSON.stringify({
+              toolCallId: event.toolCallId,
+              result: extractToolResultText(event.result) || 'completed',
+            })}`,
+          );
         }
         break;
       }
@@ -433,6 +463,20 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
   };
 
   return { agent, context, eventManager };
+}
+
+function extractToolResultText(result: unknown): string {
+  if (!result || typeof result !== 'object') return '';
+  const content = (result as { content?: unknown }).content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map(item => {
+      if (!item || typeof item !== 'object') return '';
+      const record = item as Record<string, unknown>;
+      return record.type === 'text' && typeof record.text === 'string' ? record.text : '';
+    })
+    .filter(Boolean)
+    .join('\n');
 }
 
 function extractTextFromMessage(msg: unknown): string {

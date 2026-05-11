@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types, jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions, react-hooks/exhaustive-deps */
 import React, { createContext, useContext, useLayoutEffect, useRef, useState } from 'react';
 import { cn } from './utils';
 
@@ -74,7 +75,7 @@ export function PromptInput({
       <div
         onClick={handleClick}
         className={cn(
-          'cursor-text rounded-3xl border border-white/10 bg-[#111820] p-2 shadow-sm',
+          'cursor-text rounded-lg border border-zinc-800 bg-[#111113] p-2 shadow-sm',
           disabled && 'cursor-not-allowed opacity-60',
           className,
         )}
@@ -135,7 +136,7 @@ export function PromptInputTextarea({
       onChange={handleChange}
       onKeyDown={handleKeyDown}
       className={cn(
-        'min-h-11 w-full resize-none border-none bg-transparent text-[15px] leading-6 text-white outline-none placeholder:text-white/35',
+        'min-h-11 w-full resize-none border-none bg-transparent text-[15px] leading-6 text-zinc-100 outline-none placeholder:text-zinc-600',
         className,
       )}
       rows={1}
