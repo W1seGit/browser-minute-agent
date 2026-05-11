@@ -67,6 +67,7 @@ export function getProviderTypeByProviderId(providerId: string): ProviderTypeEnu
     case ProviderTypeEnum.OpenRouter:
     case ProviderTypeEnum.Groq:
     case ProviderTypeEnum.Cerebras:
+    case ProviderTypeEnum.Llama:
     case ProviderTypeEnum.Fireworks:
     case ProviderTypeEnum.Together:
     case ProviderTypeEnum.Mistral:
@@ -78,6 +79,24 @@ export function getProviderTypeByProviderId(providerId: string): ProviderTypeEnu
     case ProviderTypeEnum.Cohere:
     case ProviderTypeEnum.OllamaCloud:
     case ProviderTypeEnum.GithubCopilot:
+    case ProviderTypeEnum.AmazonBedrock:
+    case ProviderTypeEnum.CloudflareWorkersAI:
+    case ProviderTypeEnum.CloudflareAIGateway:
+    case ProviderTypeEnum.GoogleVertex:
+    case ProviderTypeEnum.VercelAIGateway:
+    case ProviderTypeEnum.OpenAICodex:
+    case ProviderTypeEnum.OpenCode:
+    case ProviderTypeEnum.OpenCodeGo:
+    case ProviderTypeEnum.HuggingFace:
+    case ProviderTypeEnum.KimiCoding:
+    case ProviderTypeEnum.MiniMax:
+    case ProviderTypeEnum.MiniMaxCN:
+    case ProviderTypeEnum.MoonshotAI:
+    case ProviderTypeEnum.MoonshotAICN:
+    case ProviderTypeEnum.Xiaomi:
+    case ProviderTypeEnum.XiaomiTokenPlanAMS:
+    case ProviderTypeEnum.XiaomiTokenPlanCN:
+    case ProviderTypeEnum.XiaomiTokenPlanSGP:
       return providerId;
     default:
       return ProviderTypeEnum.CustomOpenAI;
@@ -132,6 +151,42 @@ export function getDefaultDisplayNameFromProviderId(providerId: string): string 
       return 'Ollama Cloud';
     case ProviderTypeEnum.GithubCopilot:
       return 'GitHub Models';
+    case ProviderTypeEnum.AmazonBedrock:
+      return 'Amazon Bedrock';
+    case ProviderTypeEnum.CloudflareWorkersAI:
+      return 'Cloudflare Workers AI';
+    case ProviderTypeEnum.CloudflareAIGateway:
+      return 'Cloudflare AI Gateway';
+    case ProviderTypeEnum.GoogleVertex:
+      return 'Google Vertex AI';
+    case ProviderTypeEnum.VercelAIGateway:
+      return 'Vercel AI Gateway';
+    case ProviderTypeEnum.OpenAICodex:
+      return 'OpenAI Codex';
+    case ProviderTypeEnum.OpenCode:
+      return 'OpenCode Zen';
+    case ProviderTypeEnum.OpenCodeGo:
+      return 'OpenCode Go';
+    case ProviderTypeEnum.HuggingFace:
+      return 'Hugging Face';
+    case ProviderTypeEnum.KimiCoding:
+      return 'Kimi For Coding';
+    case ProviderTypeEnum.MiniMax:
+      return 'MiniMax';
+    case ProviderTypeEnum.MiniMaxCN:
+      return 'MiniMax China';
+    case ProviderTypeEnum.MoonshotAI:
+      return 'Moonshot AI';
+    case ProviderTypeEnum.MoonshotAICN:
+      return 'Moonshot AI China';
+    case ProviderTypeEnum.Xiaomi:
+      return 'Xiaomi';
+    case ProviderTypeEnum.XiaomiTokenPlanAMS:
+      return 'Xiaomi Token Plan AMS';
+    case ProviderTypeEnum.XiaomiTokenPlanCN:
+      return 'Xiaomi Token Plan China';
+    case ProviderTypeEnum.XiaomiTokenPlanSGP:
+      return 'Xiaomi Token Plan Singapore';
     default:
       return providerId; // Use the provider id as display name for custom providers by default
   }
@@ -160,6 +215,24 @@ export function getDefaultProviderConfig(providerId: string): ProviderConfig {
     case ProviderTypeEnum.Cohere:
     case ProviderTypeEnum.OllamaCloud:
     case ProviderTypeEnum.GithubCopilot:
+    case ProviderTypeEnum.AmazonBedrock:
+    case ProviderTypeEnum.CloudflareWorkersAI:
+    case ProviderTypeEnum.CloudflareAIGateway:
+    case ProviderTypeEnum.GoogleVertex:
+    case ProviderTypeEnum.VercelAIGateway:
+    case ProviderTypeEnum.OpenAICodex:
+    case ProviderTypeEnum.OpenCode:
+    case ProviderTypeEnum.OpenCodeGo:
+    case ProviderTypeEnum.HuggingFace:
+    case ProviderTypeEnum.KimiCoding:
+    case ProviderTypeEnum.MiniMax:
+    case ProviderTypeEnum.MiniMaxCN:
+    case ProviderTypeEnum.MoonshotAI:
+    case ProviderTypeEnum.MoonshotAICN:
+    case ProviderTypeEnum.Xiaomi:
+    case ProviderTypeEnum.XiaomiTokenPlanAMS:
+    case ProviderTypeEnum.XiaomiTokenPlanCN:
+    case ProviderTypeEnum.XiaomiTokenPlanSGP:
       return {
         apiKey: '',
         name: getDefaultDisplayNameFromProviderId(providerId),
@@ -191,7 +264,31 @@ export function getDefaultProviderConfig(providerId: string): ProviderConfig {
                                   ? 'https://ollama.com'
                                   : providerId === ProviderTypeEnum.GithubCopilot
                                     ? 'https://models.inference.ai.azure.com'
-                                    : undefined,
+                                    : providerId === ProviderTypeEnum.AmazonBedrock
+                                      ? 'https://bedrock-runtime.us-east-1.amazonaws.com'
+                                      : providerId === ProviderTypeEnum.CloudflareWorkersAI
+                                        ? 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1'
+                                        : providerId === ProviderTypeEnum.CloudflareAIGateway
+                                          ? 'https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic'
+                                          : providerId === ProviderTypeEnum.GoogleVertex
+                                            ? 'https://{location}-aiplatform.googleapis.com'
+                                            : providerId === ProviderTypeEnum.VercelAIGateway
+                                              ? 'https://ai-gateway.vercel.sh'
+                                              : providerId === ProviderTypeEnum.OpenAICodex
+                                                ? 'https://chatgpt.com/backend-api'
+                                                : providerId === ProviderTypeEnum.MoonshotAI
+                                                  ? 'https://api.moonshot.ai/v1'
+                                                  : providerId === ProviderTypeEnum.MoonshotAICN
+                                                    ? 'https://api.moonshot.cn/v1'
+                                                    : providerId === ProviderTypeEnum.Xiaomi
+                                                      ? 'https://api.xiaomimimo.com/anthropic'
+                                                      : providerId === ProviderTypeEnum.XiaomiTokenPlanAMS
+                                                        ? 'https://token-plan-ams.xiaomimimo.com/anthropic'
+                                                        : providerId === ProviderTypeEnum.XiaomiTokenPlanCN
+                                                          ? 'https://token-plan-cn.xiaomimimo.com/anthropic'
+                                                          : providerId === ProviderTypeEnum.XiaomiTokenPlanSGP
+                                                            ? 'https://token-plan-sgp.xiaomimimo.com/anthropic'
+                                                            : undefined,
         modelNames: [...(llmProviderModelNames[providerId] || [])],
         createdAt: Date.now(),
       };
@@ -314,7 +411,12 @@ export const llmProviderStore: LLMProviderStorage = {
       if (!config.apiKey?.trim()) {
         throw new Error('API Key is required for Azure OpenAI');
       }
-    } else if (providerType !== ProviderTypeEnum.CustomOpenAI && providerType !== ProviderTypeEnum.Ollama) {
+    } else if (
+      providerType !== ProviderTypeEnum.CustomOpenAI &&
+      providerType !== ProviderTypeEnum.Ollama &&
+      providerType !== ProviderTypeEnum.AmazonBedrock &&
+      providerType !== ProviderTypeEnum.GoogleVertex
+    ) {
       if (!config.apiKey?.trim()) {
         throw new Error(`API Key is required for ${getDefaultDisplayNameFromProviderId(providerId)}`);
       }

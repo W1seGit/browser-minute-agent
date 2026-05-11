@@ -17,6 +17,7 @@ function buildResult(result: ActionResult): AgentToolResult<unknown> {
   return {
     content: [{ type: 'text', text }],
     details: result,
+    terminate: result.isDone,
   };
 }
 
@@ -27,7 +28,7 @@ function createTool<T extends TSchema>(
   parameters: T,
   execute: (toolCallId: string, params: Static<T>, signal?: AbortSignal) => Promise<AgentToolResult<unknown>>,
 ): AgentTool<T> {
-  return { name, label, description, parameters, execute };
+  return { name, label, description, parameters, execute, executionMode: 'sequential' };
 }
 
 const optionalIntent = Type.Optional(Type.String({ description: 'purpose of this action' }));
@@ -46,7 +47,7 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
       }),
       async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
         context.finalAnswer = params.text;
-        context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, params.text);
+        await context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, params.text);
         const result = new ActionResult({ isDone: true, success: params.success, extractedContent: params.text });
         if (ctx.onDone) {
           ctx.onDone(params.text, params.success ?? true);

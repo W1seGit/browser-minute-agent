@@ -323,11 +323,7 @@ async function subscribeToExecutorEvents(executor: PiExecutor) {
       logger.error('Failed to send message to side panel:', error);
     }
 
-    if (
-      event.state === ExecutionState.TASK_OK ||
-      event.state === ExecutionState.TASK_FAIL ||
-      event.state === ExecutionState.TASK_CANCEL
-    ) {
+    if (event.state === ExecutionState.TASK_FAIL || event.state === ExecutionState.TASK_CANCEL) {
       await currentExecutor?.cleanup();
     }
   });

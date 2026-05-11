@@ -1,16 +1,36 @@
 /* Add this at the top of the file */
+:root {
+  --bma-bg: #090c10;
+  --bma-bg-soft: #0d1117;
+  --bma-surface: #111821;
+  --bma-elevated: #17212b;
+  --bma-border: #263342;
+  --bma-text: #eef4f8;
+  --bma-subtle: #c4d0da;
+  --bma-muted: #7d8b99;
+  --bma-accent: #5eead4;
+  --bma-accent-strong: #14b8a6;
+  --bma-accent-text: #042f2e;
+  --bma-success: #22c55e;
+  --bma-code: #070a0e;
+}
+
 body {
-  background: #000;
-  color: #fff;
+  background: var(--bma-bg);
+  color: var(--bma-text);
+  font-feature-settings:
+    'cv02' 1,
+    'cv03' 1,
+    'cv04' 1;
 }
 
 /* Remove unused classes: .App, .App-logo, .App-header */
 
 code {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(94, 234, 212, 0.12);
   border-radius: 0.25rem;
   padding: 0.2rem 0.5rem;
-  color: #fff;
+  color: var(--bma-text);
 }
 
 /* Scrollbar styles */
@@ -19,16 +39,16 @@ code {
 }
 
 ::-webkit-scrollbar-track {
-  background: #000;
+  background: var(--bma-bg);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.28);
+  background: #314050;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.5);
+  background: #4a5d6f;
 }
 
 /* Used classes from the component */
@@ -36,9 +56,10 @@ code {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.75rem;
-  background-color: transparent;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0.75rem 0.875rem;
+  background: linear-gradient(180deg, rgba(17, 24, 33, 0.96), rgba(13, 17, 23, 0.88)), var(--bma-bg-soft);
+  border-bottom: 1px solid var(--bma-border);
+  backdrop-filter: blur(14px);
 }
 
 .header-logo {
@@ -53,14 +74,21 @@ code {
 }
 
 .header-icon {
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--bma-muted);
   cursor: pointer;
-  transition: color 0.2s ease;
+  border-radius: 0.625rem;
+  padding: 0.45rem;
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease,
+    transform 0.2s ease;
   opacity: 1;
 }
 
 .header-icon:hover {
-  color: #fff;
+  color: var(--bma-text);
+  background: var(--bma-elevated);
+  transform: translateY(-1px);
 }
 
 /* Add these styles to your existing CSS */
@@ -74,14 +102,163 @@ code {
 }
 
 .scrollbar-gutter-stable::-webkit-scrollbar-track {
-  background: #000;
+  background: var(--bma-bg);
 }
 
 .scrollbar-gutter-stable::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.28);
+  background: #314050;
   border-radius: 4px;
 }
 
 .scrollbar-gutter-stable::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.5);
+  background: #4a5d6f;
+}
+
+.bg-bma-bg {
+  background-color: var(--bma-bg);
+}
+
+.bg-bma-bg-soft {
+  background-color: var(--bma-bg-soft);
+}
+
+.bg-bma-surface {
+  background-color: var(--bma-surface);
+}
+
+.bg-bma-elevated {
+  background-color: var(--bma-elevated);
+}
+
+.bg-bma-code {
+  background-color: var(--bma-code);
+}
+
+.bg-bma-accent {
+  background-color: var(--bma-accent);
+}
+
+.bg-bma-success {
+  background-color: var(--bma-success);
+}
+
+.border-bma-border {
+  border-color: var(--bma-border);
+}
+
+.border-t-bma-accent {
+  border-top-color: var(--bma-accent);
+}
+
+.border-bma-accent\/25 {
+  border-color: rgba(94, 234, 212, 0.25);
+}
+
+.text-bma-text {
+  color: var(--bma-text);
+}
+
+.text-bma-subtle {
+  color: var(--bma-subtle);
+}
+
+.text-bma-muted {
+  color: var(--bma-muted);
+}
+
+.text-bma-accent {
+  color: var(--bma-accent);
+}
+
+.text-bma-accentText {
+  color: var(--bma-accent-text);
+}
+
+.text-bma-success {
+  color: var(--bma-success);
+}
+
+.bma-markdown {
+  color: inherit;
+}
+
+.bma-markdown > *:first-child {
+  margin-top: 0;
+}
+
+.bma-markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.bma-markdown p,
+.bma-markdown ul,
+.bma-markdown ol,
+.bma-markdown blockquote,
+.bma-markdown pre,
+.bma-markdown table {
+  margin: 0.75rem 0;
+}
+
+.bma-markdown ul,
+.bma-markdown ol {
+  padding-left: 1.25rem;
+}
+
+.bma-markdown ul {
+  list-style: disc;
+}
+
+.bma-markdown ol {
+  list-style: decimal;
+}
+
+.bma-markdown strong {
+  color: var(--bma-text);
+  font-weight: 650;
+}
+
+.bma-markdown-user strong {
+  color: var(--bma-accent-text);
+}
+
+.bma-markdown a {
+  color: var(--bma-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.bma-markdown-user a {
+  color: #063f3c;
+}
+
+.bma-markdown pre {
+  overflow-x: auto;
+  border: 1px solid var(--bma-border);
+  border-radius: 0.75rem;
+  background: var(--bma-code);
+  padding: 0.875rem;
+}
+
+.bma-markdown pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.bma-markdown blockquote {
+  border-left: 2px solid var(--bma-accent);
+  color: var(--bma-subtle);
+  padding-left: 0.875rem;
+}
+
+.bma-markdown table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.bma-markdown th,
+.bma-markdown td {
+  border: 1px solid var(--bma-border);
+  padding: 0.45rem 0.6rem;
 }

@@ -49,6 +49,7 @@ const SidePanel = () => {
   const heartbeatIntervalRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const setInputTextRef = useRef<((text: string) => void) | null>(null);
+  const streamingMessageRef = useRef<string>('');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<number | null>(null);
@@ -136,6 +137,62 @@ const SidePanel = () => {
     }
   }, []);
 
+  const appendStreamDelta = useCallback((actor: Actors, delta: string, timestamp: number) => {
+    if (!delta) return;
+
+    streamingMessageRef.current += delta;
+    const content = streamingMessageRef.current;
+
+    setMessages(prev => {
+      const filteredMessages = prev.filter((msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1));
+      const lastMessage = filteredMessages[filteredMessages.length - 1];
+
+      if (lastMessage?.actor === actor && lastMessage.content === content.slice(0, -delta.length)) {
+        return [
+          ...filteredMessages.slice(0, -1),
+          {
+            ...lastMessage,
+            content,
+            timestamp,
+          },
+        ];
+      }
+
+      return [
+        ...filteredMessages,
+        {
+          actor,
+          content,
+          timestamp,
+        },
+      ];
+    });
+  }, []);
+
+  const finalizeStreamingMessage = useCallback((actor: Actors, content: string, timestamp: number) => {
+    const streamedContent = streamingMessageRef.current;
+    streamingMessageRef.current = '';
+
+    if (!streamedContent || !content) return false;
+
+    const finalMessage = { actor, content, timestamp };
+    setMessages(prev => {
+      const lastMessage = prev[prev.length - 1];
+      if (lastMessage?.actor === actor && lastMessage.content === streamedContent) {
+        return [...prev.slice(0, -1), finalMessage];
+      }
+      return [...prev, finalMessage];
+    });
+
+    if (sessionIdRef.current) {
+      chatHistoryStore
+        .addMessage(sessionIdRef.current, finalMessage)
+        .catch(err => console.error('Failed to save message to history:', err));
+    }
+
+    return true;
+  }, []);
+
   const handleTaskState = useCallback(
     (event: AgentEvent) => {
       const { actor, state, timestamp, data } = event;
@@ -149,12 +206,14 @@ const SidePanel = () => {
             case ExecutionState.TASK_START:
               // Reset historical session flag when a new task starts
               setIsHistoricalSession(false);
+              streamingMessageRef.current = '';
               break;
             case ExecutionState.TASK_OK:
               setIsFollowUpMode(true);
               setInputEnabled(true);
               setShowStopButton(false);
               setIsReplaying(false);
+              if (finalizeStreamingMessage(actor, content, timestamp)) return;
               skip = !content;
               break;
             case ExecutionState.TASK_FAIL:
@@ -184,6 +243,32 @@ const SidePanel = () => {
           break;
         case Actors.NAVIGATOR:
           switch (state) {
+            case ExecutionState.TASK_START:
+              setIsHistoricalSession(false);
+              streamingMessageRef.current = '';
+              break;
+            case ExecutionState.TASK_OK:
+              setIsFollowUpMode(true);
+              setInputEnabled(true);
+              setShowStopButton(false);
+              setIsReplaying(false);
+              if (finalizeStreamingMessage(actor, content, timestamp)) return;
+              skip = !content;
+              break;
+            case ExecutionState.TASK_FAIL:
+              setIsFollowUpMode(true);
+              setInputEnabled(true);
+              setShowStopButton(false);
+              setIsReplaying(false);
+              skip = false;
+              break;
+            case ExecutionState.TASK_CANCEL:
+              setIsFollowUpMode(false);
+              setInputEnabled(true);
+              setShowStopButton(false);
+              setIsReplaying(false);
+              skip = false;
+              break;
             case ExecutionState.STEP_START:
               displayProgress = true;
               break;
@@ -209,6 +294,12 @@ const SidePanel = () => {
             case ExecutionState.ACT_FAIL:
               skip = false;
               break;
+            case ExecutionState.STREAM_THINKING:
+              skip = true;
+              break;
+            case ExecutionState.STREAM_TEXT:
+              appendStreamDelta(actor, content, timestamp);
+              return;
             default:
               console.error('Invalid action', state);
               return;
@@ -252,7 +343,7 @@ const SidePanel = () => {
         });
       }
     },
-    [appendMessage],
+    [appendMessage, appendStreamDelta, finalizeStreamingMessage],
   );
 
   // Stop heartbeat and close connection
@@ -964,8 +1055,8 @@ const SidePanel = () => {
   };
 
   return (
-    <div className="bg-black text-white">
-      <div className="flex h-screen flex-col overflow-hidden bg-black text-white">
+    <div className="bg-bma-bg text-bma-text">
+      <div className="flex h-screen flex-col overflow-hidden bg-bma-bg text-bma-text">
         <header className="header relative">
           <div className="header-logo min-w-0 flex-1 gap-2">
             {showHistory ? (
@@ -977,7 +1068,10 @@ const SidePanel = () => {
                 {t('nav_back')}
               </button>
             ) : (
-              <span className="text-sm font-medium text-white">min-agent</span>
+              <div className="flex items-center gap-2">
+                <span className="size-2 rounded-full bg-bma-accent" />
+                <span className="text-sm font-semibold text-bma-text">min-agent</span>
+              </div>
             )}
           </div>
           <div className="header-icons">
@@ -1029,9 +1123,9 @@ const SidePanel = () => {
           <>
             {/* Show loading state while checking model configuration */}
             {hasProviders === null && (
-              <div className="flex flex-1 items-center justify-center p-8 text-white/70">
+              <div className="flex flex-1 items-center justify-center p-8 text-bma-muted">
                 <div className="text-center">
-                  <div className="mx-auto mb-4 size-8 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                  <div className="mx-auto mb-4 size-8 animate-spin rounded-full border-2 border-bma-border border-t-bma-accent"></div>
                   <p>{t('status_checkingConfig')}</p>
                 </div>
               </div>
@@ -1039,15 +1133,15 @@ const SidePanel = () => {
 
             {/* Show setup message when no models are configured */}
             {hasProviders === false && (
-              <div className="flex flex-1 items-center justify-center p-8 text-white/70">
+              <div className="flex flex-1 items-center justify-center p-8 text-bma-muted">
                 <div className="max-w-md text-center">
-                  <h3 className="mb-2 text-lg font-semibold text-white">Add a provider</h3>
-                  <p className="mb-4 text-sm text-white/60">
+                  <h3 className="mb-2 text-lg font-semibold text-bma-text">Add a provider</h3>
+                  <p className="mb-4 text-sm text-bma-muted">
                     Connect a provider in settings, then pick a model next to the input.
                   </p>
                   <button
                     onClick={() => chrome.runtime.openOptionsPage()}
-                    className="my-4 rounded-lg bg-white px-4 py-2 text-sm font-medium text-black transition-opacity hover:opacity-85">
+                    className="my-4 rounded-lg bg-bma-accent px-4 py-2 text-sm font-semibold text-bma-accentText transition hover:brightness-110">
                     Open settings
                   </button>
                 </div>
@@ -1058,10 +1152,10 @@ const SidePanel = () => {
             {hasProviders === true && (
               <>
                 {messages.length === 0 && (
-                  <>
-                    <div className="mb-2 border-t border-white/10 p-2">
-                      <div className="mb-2 flex items-center justify-between px-1">
-                        <span className="text-xs uppercase tracking-wide text-white/40">Model</span>
+                  <div className="flex flex-1 items-center justify-center bg-bma-bg p-4">
+                    <div className="w-full max-w-2xl">
+                      <div className="mb-3 flex items-center justify-between px-1">
+                        <span className="text-xs uppercase tracking-wide text-bma-muted">Model</span>
                         <ModelSelector onModelConfigured={checkModelConfiguration} />
                       </div>
                       <ChatInput
@@ -1080,19 +1174,18 @@ const SidePanel = () => {
                         onReplay={handleReplay}
                       />
                     </div>
-                    <div className="flex-1 bg-black" />
-                  </>
+                  </div>
                 )}
                 {messages.length > 0 && (
-                  <div className="scrollbar-gutter-stable flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth bg-black p-2">
+                  <div className="scrollbar-gutter-stable flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth bg-bma-bg">
                     <MessageList messages={messages} isDarkMode={true} />
                     <div ref={messagesEndRef} />
                   </div>
                 )}
                 {messages.length > 0 && (
-                  <div className="border-t border-white/10 p-2">
+                  <div className="border-t border-bma-border bg-bma-bg-soft p-3">
                     <div className="mb-2 flex items-center justify-between px-1">
-                      <span className="text-xs uppercase tracking-wide text-white/40">Model</span>
+                      <span className="text-xs uppercase tracking-wide text-bma-muted">Model</span>
                       <ModelSelector onModelConfigured={checkModelConfiguration} />
                     </div>
                     <ChatInput

@@ -6,6 +6,7 @@ import { EventManager } from '../event/manager';
 import type { ProviderConfig, ModelConfig, GeneralSettingsConfig } from '@extension/storage';
 import type BrowserContext from '../../browser/context';
 import type { AgentOptions } from '../types';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 
 const logger = createLogger('PiExecutor');
 
@@ -26,6 +27,8 @@ export class PiExecutor {
   private followUpTasks: string[] = [];
   private eventManager: EventManager = new EventManager();
   private running = false;
+  private initialTaskCompleted = false;
+  private eventsForwarded = false;
 
   constructor(
     task: string,
@@ -45,42 +48,36 @@ export class PiExecutor {
 
   async execute(): Promise<{ success: boolean; result: string }> {
     if (this.running) {
-      throw new Error('Executor is already running');
+      return { success: true, result: 'Task is already running; follow-up queued' };
     }
 
     this.running = true;
 
     try {
-      this.session = await createPiAgent({
-        task: this.task,
-        taskId: this.taskId,
-        browserContext: this.browserContext,
-        providerConfig: this.providerConfig,
-        modelConfig: this.modelConfig,
-        agentOptions: this.options.agentOptions,
-      });
-
-      // Forward events from the session's event manager to our local event manager
-      const forwardCallback: EventCallback = async event => {
-        await this.eventManager.emit(event);
-      };
-      this.session.eventManager.subscribe(EventType.EXECUTION, forwardCallback);
+      await this.ensureSession();
 
       // Execute the task
-      await this.session.agent.prompt(this.task);
-      await this.session.agent.waitForIdle();
+      if (!this.initialTaskCompleted) {
+        if (this.session) {
+          this.resetRunState();
+        }
+        await this.session?.agent.prompt(this.task);
+        await this.session?.agent.waitForIdle();
+        this.initialTaskCompleted = true;
+      }
 
       // Process any follow-up tasks
-      while (this.followUpTasks.length > 0 && this.running) {
+      while (this.session && this.followUpTasks.length > 0 && this.running) {
         const followUp = this.followUpTasks.shift();
         if (followUp) {
           logger.info('Processing follow-up task:', followUp);
-          await this.session.agent.prompt(followUp);
+          this.resetRunState();
+          await this.session.agent.prompt(this.createUserMessage(followUp));
           await this.session.agent.waitForIdle();
         }
       }
 
-      const resultText = this.session.context.finalAnswer || 'Task completed';
+      const resultText = this.session?.context.finalAnswer || 'Task completed';
       return { success: true, result: resultText };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -90,6 +87,9 @@ export class PiExecutor {
       }
       return { success: false, result: errorMessage };
     } finally {
+      await this.browserContext.removeHighlight().catch(error => {
+        logger.warning(`Failed to remove highlights: ${error}`);
+      });
       this.running = false;
     }
   }
@@ -117,6 +117,10 @@ export class PiExecutor {
   }
 
   addFollowUpTask(task: string): void {
+    if (this.running && this.session) {
+      this.session.agent.followUp(this.createUserMessage(task));
+      return;
+    }
     this.followUpTasks.push(task);
   }
 
@@ -135,6 +139,8 @@ export class PiExecutor {
     this.session = null;
     this.followUpTasks = [];
     this.running = false;
+    this.initialTaskCompleted = false;
+    this.eventsForwarded = false;
   }
 
   clearExecutionEvents(): void {
@@ -143,5 +149,42 @@ export class PiExecutor {
 
   subscribeExecutionEvents(callback: EventCallback): void {
     this.eventManager.subscribe(EventType.EXECUTION, callback);
+  }
+
+  private async ensureSession(): Promise<void> {
+    if (!this.session) {
+      this.session = await createPiAgent({
+        task: this.task,
+        taskId: this.taskId,
+        browserContext: this.browserContext,
+        providerConfig: this.providerConfig,
+        modelConfig: this.modelConfig,
+        agentOptions: this.options.agentOptions,
+      });
+      this.eventsForwarded = false;
+    }
+
+    if (!this.eventsForwarded) {
+      const forwardCallback: EventCallback = async event => {
+        await this.eventManager.emit(event);
+      };
+      this.session.eventManager.subscribe(EventType.EXECUTION, forwardCallback);
+      this.eventsForwarded = true;
+    }
+  }
+
+  private createUserMessage(text: string): AgentMessage {
+    return {
+      role: 'user',
+      content: text,
+      timestamp: Date.now(),
+    };
+  }
+
+  private resetRunState(): void {
+    if (!this.session) return;
+    this.session.context.finalAnswer = null;
+    this.session.context.consecutiveFailures = 0;
+    this.session.context.nSteps = 0;
   }
 }

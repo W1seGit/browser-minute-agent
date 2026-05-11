@@ -1,7 +1,15 @@
 import { Agent, type AgentMessage } from '@earendil-works/pi-agent-core';
-import { getModel, type Model, type Api, type KnownProvider } from '@earendil-works/pi-ai';
+import {
+  getModel,
+  getModels,
+  streamSimple,
+  type Model,
+  type Api,
+  type KnownProvider,
+  type SimpleStreamOptions,
+} from '@earendil-works/pi-ai';
 import type { ProviderConfig, ModelConfig } from '@extension/storage';
-import { ProviderTypeEnum } from '@extension/storage';
+import { getProviderTypeByProviderId, ProviderTypeEnum } from '@extension/storage';
 import { createLogger } from '@src/background/log';
 import { createBrowserTools, type PiToolContext } from './tools';
 import type BrowserContext from '../../browser/context';
@@ -13,37 +21,147 @@ import MessageManager from '../messages/service';
 
 const logger = createLogger('PiSession');
 
-function mapProviderToPi(provider: ProviderTypeEnum): string {
+type PiApi =
+  | 'openai-completions'
+  | 'openai-responses'
+  | 'azure-openai-responses'
+  | 'openai-codex-responses'
+  | 'anthropic-messages'
+  | 'google-generative-ai'
+  | 'google-vertex'
+  | 'bedrock-converse-stream';
+
+interface PiProviderMapping {
+  provider: string;
+  api: PiApi;
+  requiresBaseUrl?: boolean;
+  appendV1BasePath?: boolean;
+}
+
+function mapProviderToPi(providerId: string, providerConfig: ProviderConfig): PiProviderMapping {
+  const provider = providerConfig.type ?? getProviderTypeByProviderId(providerId);
+
   switch (provider) {
     case ProviderTypeEnum.OpenAI:
-      return 'openai';
+      return { provider: 'openai', api: 'openai-responses' };
     case ProviderTypeEnum.Anthropic:
-      return 'anthropic';
+      return { provider: 'anthropic', api: 'anthropic-messages' };
     case ProviderTypeEnum.DeepSeek:
-      return 'deepseek';
+      return { provider: 'deepseek', api: 'openai-completions' };
     case ProviderTypeEnum.Gemini:
-      return 'google';
+      return { provider: 'google', api: 'google-generative-ai' };
     case ProviderTypeEnum.Grok:
-      return 'xai';
+    case ProviderTypeEnum.Xai:
+      return { provider: 'xai', api: 'openai-completions' };
     case ProviderTypeEnum.Groq:
-      return 'groq';
+      return { provider: 'groq', api: 'openai-completions' };
     case ProviderTypeEnum.Cerebras:
-      return 'cerebras';
+      return { provider: 'cerebras', api: 'openai-completions' };
     case ProviderTypeEnum.Ollama:
-      return 'ollama';
+      return { provider: 'ollama', api: 'openai-completions', requiresBaseUrl: true, appendV1BasePath: true };
     case ProviderTypeEnum.OpenRouter:
-      return 'openrouter';
+      return { provider: 'openrouter', api: 'openai-completions', requiresBaseUrl: true };
     case ProviderTypeEnum.Llama:
-      return 'openai';
+      return { provider: 'llama', api: 'openai-completions', requiresBaseUrl: true };
     case ProviderTypeEnum.AzureOpenAI:
-      return 'azure-openai-responses';
+      return { provider: 'azure-openai-responses', api: 'azure-openai-responses', requiresBaseUrl: true };
+    case ProviderTypeEnum.AmazonBedrock:
+      return { provider: 'amazon-bedrock', api: 'bedrock-converse-stream' };
+    case ProviderTypeEnum.CloudflareWorkersAI:
+      return { provider: 'cloudflare-workers-ai', api: 'openai-completions', requiresBaseUrl: true };
+    case ProviderTypeEnum.CloudflareAIGateway:
+      return { provider: 'cloudflare-ai-gateway', api: 'anthropic-messages', requiresBaseUrl: true };
+    case ProviderTypeEnum.GoogleVertex:
+      return { provider: 'google-vertex', api: 'google-vertex', requiresBaseUrl: true };
+    case ProviderTypeEnum.VercelAIGateway:
+      return { provider: 'vercel-ai-gateway', api: 'anthropic-messages', requiresBaseUrl: true };
+    case ProviderTypeEnum.OpenAICodex:
+      return { provider: 'openai-codex', api: 'openai-codex-responses', requiresBaseUrl: true };
+    case ProviderTypeEnum.OpenCode:
+      return { provider: 'opencode', api: 'openai-responses' };
+    case ProviderTypeEnum.OpenCodeGo:
+      return { provider: 'opencode-go', api: 'openai-completions' };
+    case ProviderTypeEnum.HuggingFace:
+      return { provider: 'huggingface', api: 'openai-completions' };
+    case ProviderTypeEnum.KimiCoding:
+      return { provider: 'kimi-coding', api: 'openai-completions' };
+    case ProviderTypeEnum.MiniMax:
+      return { provider: 'minimax', api: 'openai-completions' };
+    case ProviderTypeEnum.MiniMaxCN:
+      return { provider: 'minimax-cn', api: 'openai-completions' };
+    case ProviderTypeEnum.MoonshotAI:
+      return { provider: 'moonshotai', api: 'openai-completions', requiresBaseUrl: true };
+    case ProviderTypeEnum.MoonshotAICN:
+      return { provider: 'moonshotai-cn', api: 'openai-completions', requiresBaseUrl: true };
+    case ProviderTypeEnum.Xiaomi:
+      return { provider: 'xiaomi', api: 'anthropic-messages', requiresBaseUrl: true };
+    case ProviderTypeEnum.XiaomiTokenPlanAMS:
+      return { provider: 'xiaomi-token-plan-ams', api: 'anthropic-messages', requiresBaseUrl: true };
+    case ProviderTypeEnum.XiaomiTokenPlanCN:
+      return { provider: 'xiaomi-token-plan-cn', api: 'anthropic-messages', requiresBaseUrl: true };
+    case ProviderTypeEnum.XiaomiTokenPlanSGP:
+      return { provider: 'xiaomi-token-plan-sgp', api: 'anthropic-messages', requiresBaseUrl: true };
+    case ProviderTypeEnum.Fireworks:
+      return { provider: 'fireworks', api: 'openai-completions', requiresBaseUrl: true };
+    case ProviderTypeEnum.Together:
+      return { provider: 'together', api: 'openai-completions', requiresBaseUrl: true };
+    case ProviderTypeEnum.Mistral:
+      return { provider: 'mistral', api: 'openai-completions' };
+    case ProviderTypeEnum.Nebius:
+      return { provider: 'nebius', api: 'openai-completions', requiresBaseUrl: true };
+    case ProviderTypeEnum.Zai:
+    case ProviderTypeEnum.BigModel:
+      return { provider: 'zai', api: 'openai-completions', requiresBaseUrl: true };
+    case ProviderTypeEnum.Aliyun:
+      return { provider: 'aliyun', api: 'openai-completions', requiresBaseUrl: true };
+    case ProviderTypeEnum.Cohere:
+      return { provider: 'cohere', api: 'openai-completions', requiresBaseUrl: true };
+    case ProviderTypeEnum.OllamaCloud:
+      return { provider: 'ollama', api: 'openai-completions', requiresBaseUrl: true, appendV1BasePath: true };
+    case ProviderTypeEnum.GithubCopilot:
+      return { provider: 'github-copilot', api: 'openai-completions', requiresBaseUrl: true };
+    case ProviderTypeEnum.CustomOpenAI:
+      return {
+        provider: providerConfig.name?.trim() || providerId,
+        api: 'openai-completions',
+        requiresBaseUrl: true,
+      };
     default:
-      return provider;
+      throw new Error(`Provider ${provider} is not supported by the Pi integration`);
   }
 }
 
+function normalizeBaseUrl(baseUrl: string | undefined, mapping: PiProviderMapping): string {
+  const trimmed = baseUrl?.trim() || '';
+  if (mapping.requiresBaseUrl && !trimmed) {
+    throw new Error(`Provider ${mapping.provider} requires a base URL for Pi`);
+  }
+  if (!trimmed || !mapping.appendV1BasePath) {
+    return trimmed;
+  }
+  return trimmed.endsWith('/v1') ? trimmed : `${trimmed.replace(/\/+$/, '')}/v1`;
+}
+
+function withProviderOverrides(
+  model: Model<Api>,
+  providerConfig: ProviderConfig,
+  mapping: PiProviderMapping,
+): Model<Api> {
+  return {
+    ...model,
+    provider: mapping.provider,
+    baseUrl: normalizeBaseUrl(providerConfig.baseUrl || model.baseUrl, mapping),
+  };
+}
+
+function getDefaultProviderBaseUrl(provider: string): string {
+  const models = getModels(provider as KnownProvider) as Model<Api>[];
+  return models[0]?.baseUrl || '';
+}
+
 function createPiModel(providerConfig: ProviderConfig, modelConfig: ModelConfig): Model<Api> | undefined {
-  const piProvider = mapProviderToPi(modelConfig.provider as ProviderTypeEnum);
+  const mapping = mapProviderToPi(modelConfig.provider, providerConfig);
+  const piProvider = mapping.provider;
   const piModelId = modelConfig.modelName;
 
   const builtInModel = (getModel as (provider: KnownProvider, modelId: string) => Model<Api> | undefined)(
@@ -51,35 +169,19 @@ function createPiModel(providerConfig: ProviderConfig, modelConfig: ModelConfig)
     piModelId,
   );
   if (builtInModel) {
-    return builtInModel as Model<Api>;
+    return withProviderOverrides(builtInModel as Model<Api>, providerConfig, mapping);
   }
 
   logger.info(`Creating custom Pi model for ${piProvider}/${piModelId}`);
 
-  let api: Model<Api>['api'] = 'openai-completions';
-  switch (modelConfig.provider) {
-    case ProviderTypeEnum.Anthropic:
-      api = 'anthropic-messages';
-      break;
-    case ProviderTypeEnum.Gemini:
-      api = 'google-generative-ai';
-      break;
-    case ProviderTypeEnum.AzureOpenAI:
-      api = 'azure-openai-responses';
-      break;
-    case ProviderTypeEnum.Ollama:
-      api = 'openai-completions';
-      break;
-    default:
-      api = 'openai-completions';
-  }
+  const defaultBaseUrl = getDefaultProviderBaseUrl(piProvider);
 
   return {
     id: piModelId,
     name: piModelId,
-    api,
+    api: mapping.api,
     provider: piProvider,
-    baseUrl: providerConfig.baseUrl || '',
+    baseUrl: normalizeBaseUrl(providerConfig.baseUrl || defaultBaseUrl, mapping),
     reasoning: false,
     input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -103,6 +205,37 @@ export interface PiSession {
   eventManager: EventManager;
 }
 
+function createPiStreamOptions(providerConfig: ProviderConfig, modelConfig: ModelConfig): Partial<SimpleStreamOptions> {
+  const parameters = modelConfig.parameters || {};
+  const temperature = parameters.temperature;
+  const maxTokens = parameters.maxTokens;
+  const options: Partial<SimpleStreamOptions> = {};
+
+  if (typeof temperature === 'number') {
+    options.temperature = temperature;
+  }
+  if (typeof maxTokens === 'number') {
+    options.maxTokens = maxTokens;
+  }
+
+  return {
+    ...options,
+    ...(providerConfig.type === ProviderTypeEnum.AzureOpenAI
+      ? {
+          azureApiVersion: providerConfig.azureApiVersion,
+          azureBaseUrl: providerConfig.baseUrl,
+          azureDeploymentName: modelConfig.modelName,
+        }
+      : {}),
+  } as Partial<SimpleStreamOptions>;
+}
+
+async function waitIfPaused(context: AgentContext, signal?: AbortSignal): Promise<void> {
+  while (context.paused && !context.stopped && !signal?.aborted) {
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+}
+
 export async function createPiAgent(options: PiSessionOptions): Promise<PiSession> {
   const { task, taskId, browserContext, providerConfig, modelConfig, agentOptions } = options;
 
@@ -122,12 +255,17 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
   const systemPrompt = navigatorPrompt.getSystemMessage().content as string;
 
   const useVision = agentOptions?.useVision ?? DEFAULT_AGENT_OPTIONS.useVision;
+  const piStreamOptions = createPiStreamOptions(providerConfig, modelConfig);
+  const thinkingLevel = modelConfig.reasoningEffort ?? 'medium';
+  let finalSuccess = true;
+  let terminalFailure: string | null = null;
 
   // Create tools bound to the runtime context
   const toolCtx: PiToolContext = {
     agentContext: context,
-    onDone: text => {
+    onDone: (text, success) => {
       context.finalAnswer = text;
+      finalSuccess = success;
     },
   };
   const tools = createBrowserTools(toolCtx);
@@ -137,10 +275,23 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
     initialState: {
       systemPrompt,
       model,
-      thinkingLevel: 'medium',
+      thinkingLevel,
       tools,
     },
     getApiKey: () => providerConfig.apiKey,
+    streamFn: (streamModel, streamContext, streamOptions) =>
+      streamSimple(streamModel, streamContext, {
+        ...streamOptions,
+        ...piStreamOptions,
+      } as SimpleStreamOptions),
+    toolExecution: 'sequential',
+    beforeToolCall: async (_toolContext, signal) => {
+      await waitIfPaused(context, signal);
+      if (context.stopped || signal?.aborted) {
+        return { block: true, reason: 'Task cancelled' };
+      }
+      return undefined;
+    },
   });
 
   // Forward Pi agent events to the extension's EventManager
@@ -156,12 +307,27 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
         break;
 
       case 'agent_end': {
+        if (terminalFailure) {
+          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_FAIL, terminalFailure);
+          break;
+        }
+        if (context.stopped) {
+          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_CANCEL, 'Task cancelled');
+          break;
+        }
+        const lastMsg = event.messages[event.messages.length - 1];
+        const assistantError = extractAssistantError(lastMsg);
+        if (assistantError) {
+          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_FAIL, assistantError);
+          break;
+        }
         const finalAnswer = context.finalAnswer;
-        if (finalAnswer) {
+        if (finalAnswer && finalSuccess) {
           await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_OK, finalAnswer);
+        } else if (finalAnswer) {
+          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_FAIL, finalAnswer);
         } else {
           // Extract final text from last assistant message
-          const lastMsg = event.messages[event.messages.length - 1];
           const text = extractTextFromMessage(lastMsg);
           await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_OK, text || 'Task completed');
         }
@@ -175,6 +341,10 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
           ExecutionState.STEP_START,
           `Step ${context.nSteps}/${context.options.maxSteps}`,
         );
+        if (context.nSteps > context.options.maxSteps) {
+          terminalFailure = `Max steps reached (${context.options.maxSteps})`;
+          agent.abort();
+        }
         break;
 
       case 'turn_end':
@@ -204,8 +374,14 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
 
       case 'tool_execution_end': {
         if (event.isError) {
+          context.consecutiveFailures += 1;
           await context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, `${event.toolName} failed`);
+          if (context.consecutiveFailures >= context.options.maxFailures) {
+            terminalFailure = `Max failures reached (${context.options.maxFailures})`;
+            agent.abort();
+          }
         } else {
+          context.consecutiveFailures = 0;
           await context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, `${event.toolName} completed`);
         }
         break;
@@ -228,7 +404,7 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
 
     try {
       const browserState = await browserContext.getState(useVision);
-      const elementsText = browserState.elementTree.clickableElementsToString(DEFAULT_AGENT_OPTIONS.includeAttributes);
+      const elementsText = browserState.elementTree.clickableElementsToString(context.options.includeAttributes);
       const tabsInfo = browserState.tabs.map(tab => `Tab ${tab.id}: ${tab.url}`).join('\n');
 
       const stateMessage = {
@@ -270,6 +446,18 @@ function extractTextFromMessage(msg: unknown): string {
   }
   if (typeof m.content === 'string') {
     return m.content;
+  }
+  return '';
+}
+
+function extractAssistantError(msg: unknown): string {
+  if (!msg || typeof msg !== 'object') return '';
+  const m = msg as Record<string, unknown>;
+  if (m.role !== 'assistant') return '';
+  if (m.stopReason === 'error' || m.stopReason === 'aborted') {
+    return typeof m.errorMessage === 'string' && m.errorMessage.length > 0
+      ? m.errorMessage
+      : `Assistant stopped with reason: ${String(m.stopReason)}`;
   }
   return '';
 }

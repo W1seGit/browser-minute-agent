@@ -1,15 +1,18 @@
-import type { Message } from '@extension/storage';
+import type { Message as StorageMessage } from '@extension/storage';
 import { ACTOR_PROFILES } from '../types/message';
 import { memo } from 'react';
+import { FiCheckCircle, FiChevronDown, FiMousePointer, FiTerminal } from 'react-icons/fi';
+import { Message as PromptMessage, MessageAvatar, MessageContent } from './prompt-kit/message';
+import { Steps, StepsBar, StepsContent, StepsItem, StepsTrigger } from './prompt-kit/steps';
 
 interface MessageListProps {
-  messages: Message[];
+  messages: StorageMessage[];
   isDarkMode?: boolean;
 }
 
 export default memo(function MessageList({ messages, isDarkMode = false }: MessageListProps) {
   return (
-    <div className="max-w-full space-y-4">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-3 py-5">
       {messages.map((message, index) => (
         <MessageBlock
           key={`${message.actor}-${message.timestamp}-${index}`}
@@ -23,7 +26,7 @@ export default memo(function MessageList({ messages, isDarkMode = false }: Messa
 });
 
 interface MessageBlockProps {
-  message: Message;
+  message: StorageMessage;
   isSameActor: boolean;
   isDarkMode?: boolean;
 }
@@ -35,47 +38,118 @@ function MessageBlock({ message, isSameActor, isDarkMode = false }: MessageBlock
   }
   const actor = ACTOR_PROFILES[message.actor as keyof typeof ACTOR_PROFILES];
   const isProgress = message.content === 'Showing progress...';
+  const isUser = message.actor === 'user';
+  const toolCall = parseToolCall(message.content);
+
+  if (toolCall && !isUser) {
+    return <ToolCallStep call={toolCall} timestamp={message.timestamp} />;
+  }
 
   return (
-    <div
-      className={`flex max-w-full gap-3 ${
-        !isSameActor
-          ? `mt-4 border-t ${isDarkMode ? 'border-sky-800/50' : 'border-sky-200/50'} pt-4 first:mt-0 first:border-t-0 first:pt-0`
-          : ''
-      }`}>
-      {!isSameActor && (
-        <div
-          className="flex size-8 shrink-0 items-center justify-center rounded-full"
-          style={{ backgroundColor: actor.iconBackground }}>
-          <img src={actor.icon} alt={actor.name} className="size-6" />
-        </div>
+    <PromptMessage className={`max-w-full ${isUser ? 'justify-end' : 'justify-start'}`}>
+      {!isUser && !isSameActor && (
+        <MessageAvatar
+          src={actor.icon}
+          alt={actor.name}
+          fallback="AI"
+          className="border border-white/10 bg-[#151b23]"
+        />
       )}
-      {isSameActor && <div className="w-8" />}
+      {!isUser && isSameActor && <div className="w-8 shrink-0" />}
 
-      <div className="min-w-0 flex-1">
+      <div className={`min-w-0 ${isUser ? 'max-w-[84%]' : 'max-w-[calc(100%-2.75rem)] flex-1'}`}>
         {!isSameActor && (
-          <div className={`mb-1 text-sm font-semibold ${isDarkMode ? 'text-gray-200' : 'text-gray-900'}`}>
-            {actor.name}
+          <div
+            className={`mb-1 text-[11px] font-medium uppercase tracking-[0.14em] text-[#7d8794] ${isUser ? 'text-right' : 'text-left'}`}>
+            {isUser ? 'You' : actor.name}
           </div>
         )}
 
-        <div className="space-y-0.5">
-          <div className={`whitespace-pre-wrap break-words text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-            {isProgress ? (
-              <div className={`h-1 overflow-hidden rounded ${isDarkMode ? 'bg-gray-700' : 'bg-gray-200'}`}>
-                <div className="h-full animate-progress bg-blue-500" />
-              </div>
-            ) : (
-              message.content
-            )}
-          </div>
-          {!isProgress && (
-            <div className={`text-right text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-300'}`}>
-              {formatTimestamp(message.timestamp)}
+        {isProgress ? (
+          <MessageContent className="border border-white/10 bg-[#111820] text-white">
+            <div className="h-1 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full animate-progress bg-[#6ee7d8]" />
             </div>
-          )}
-        </div>
+          </MessageContent>
+        ) : (
+          <MessageContent
+            markdown
+            className={`bma-markdown border shadow-sm ${
+              isUser
+                ? 'bma-markdown-user border-[#6ee7d8]/25 bg-[#6ee7d8] text-[#062b28]'
+                : 'border-white/10 bg-[#111820] text-[#e7eef7]'
+            }`}>
+            {message.content}
+          </MessageContent>
+        )}
+        {!isProgress && (
+          <div className={`mt-1 text-xs text-[#7d8794] ${isUser ? 'text-right' : 'text-left'}`}>
+            {formatTimestamp(message.timestamp)}
+          </div>
+        )}
       </div>
+    </PromptMessage>
+  );
+}
+
+type ToolCall = {
+  name: string;
+  label: string;
+  details: string;
+};
+
+function parseToolCall(content: string): ToolCall | null {
+  const match = content.match(/^([a-zA-Z_][\w-]*):\s*([\s\S]+)$/);
+  if (!match) return null;
+
+  const [, name, rawDetails] = match;
+  if (!name.includes('_') && !rawDetails.trim().startsWith('{')) return null;
+
+  let label = name
+    .split(/[_-]/)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+  let details = rawDetails.trim();
+
+  try {
+    const parsed = JSON.parse(details);
+    label = parsed.intent || parsed.text || label;
+    details = Object.entries(parsed)
+      .filter(([key]) => key !== 'intent')
+      .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`)
+      .join('\n');
+  } catch {
+    // Keep raw details when the action payload is not JSON.
+  }
+
+  return { name, label, details };
+}
+
+function ToolCallStep({ call, timestamp }: { call: ToolCall; timestamp: number }) {
+  return (
+    <div className="mx-auto w-full max-w-3xl px-3">
+      <Steps defaultOpen={false} className="rounded-2xl border border-white/10 bg-[#0f151d] px-3 py-2">
+        <StepsTrigger
+          leftIcon={
+            call.name.includes('click') ? <FiMousePointer className="size-4" /> : <FiTerminal className="size-4" />
+          }
+          className="min-w-0 text-[#d6e0ea]">
+          <span className="min-w-0 flex-1 truncate text-left">{call.label}</span>
+          <span className="ml-auto hidden shrink-0 items-center gap-1 text-xs text-[#7d8794] min-[420px]:flex">
+            <FiCheckCircle className="size-3.5 text-[#55d98f]" />
+            {formatTimestamp(timestamp)}
+          </span>
+          <FiChevronDown className="size-4 shrink-0 text-[#7d8794]" />
+        </StepsTrigger>
+        <StepsContent bar={<StepsBar className="bg-[#2c3744]" />}>
+          <StepsItem className="text-xs text-[#7d8794]">{call.name}</StepsItem>
+          {call.details && (
+            <StepsItem className="whitespace-pre-wrap rounded-xl bg-[#090d12] p-3 font-mono text-xs text-[#b9c5d1]">
+              {call.details}
+            </StepsItem>
+          )}
+        </StepsContent>
+      </Steps>
     </div>
   );
 }
