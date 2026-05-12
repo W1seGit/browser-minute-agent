@@ -112,10 +112,12 @@ type ToolCall = {
 
 type TraceStep =
   | { type: 'reasoning'; text: string; timestamp: number }
+  | { type: 'progress'; timestamp: number }
   | { type: 'tools'; calls: ToolCall[]; timestamp: number };
 
 const TOOL_MESSAGE_PREFIX = '__bma_tool_call__:';
 const REASONING_MESSAGE_PREFIX = '__bma_reasoning__:';
+const PROGRESS_MESSAGE = 'Showing progress...';
 
 type DisplayItem =
   | { type: 'message'; message: StorageMessage }
@@ -151,6 +153,14 @@ function buildDisplayItems(messages: StorageMessage[], isWorking: boolean): Disp
     const reasoningText = message.actor !== 'user' ? parseReasoningMessage(message.content) : null;
     if (reasoningText !== null) {
       traceSteps.push({ type: 'reasoning', text: reasoningText, timestamp: message.timestamp });
+      return;
+    }
+
+    if (message.actor !== 'user' && message.content === PROGRESS_MESSAGE) {
+      const lastStep = traceSteps[traceSteps.length - 1];
+      if (lastStep?.type !== 'progress') {
+        traceSteps.push({ type: 'progress', timestamp: message.timestamp });
+      }
       return;
     }
 
@@ -235,6 +245,7 @@ function stableStringify(value: unknown): string {
 function RunTrace({ steps, active }: { steps: TraceStep[]; active: boolean }) {
   const actionCount = steps.reduce((count, step) => count + (step.type === 'tools' ? step.calls.length : 0), 0);
   const reasoningCount = steps.filter(step => step.type === 'reasoning').length;
+  const progressCount = steps.filter(step => step.type === 'progress').length;
   const running = active;
 
   return (
@@ -252,7 +263,7 @@ function RunTrace({ steps, active }: { steps: TraceStep[]; active: boolean }) {
           <span className="flex min-w-0 items-center gap-2">
             <span className="truncate">{running ? 'Working through steps' : 'Run steps'}</span>
             <span className="shrink-0 text-[11px] text-zinc-500">
-              {reasoningCount} reasoning · {actionCount} actions
+              {reasoningCount} reasoning · {actionCount} actions{progressCount > 0 ? ' · working' : ''}
             </span>
           </span>
         </StepsTrigger>
@@ -265,8 +276,10 @@ function RunTrace({ steps, active }: { steps: TraceStep[]; active: boolean }) {
                 isLast={index === steps.length - 1}>
                 {step.type === 'reasoning' ? (
                   <ReasoningStep step={step} active={active && index === steps.length - 1} />
+                ) : step.type === 'progress' ? (
+                  <ProgressStep active={active && index === steps.length - 1} />
                 ) : (
-                  <ToolGroupStep calls={step.calls} />
+                  <ToolGroupStep calls={step.calls} active={active && index === steps.length - 1} />
                 )}
               </ChainOfThoughtStep>
             ))}
@@ -278,7 +291,30 @@ function RunTrace({ steps, active }: { steps: TraceStep[]; active: boolean }) {
 }
 
 function isOpenTraceStep(step: TraceStep, index: number, steps: TraceStep[], active: boolean) {
-  return active && index === steps.length - 1 && step.type === 'reasoning';
+  if (!active || index !== steps.length - 1) return false;
+  if (step.type === 'reasoning') return true;
+  if (step.type === 'tools') return step.calls.some(call => call.state === 'input-streaming');
+  return false;
+}
+
+function ProgressStep({ active }: { active: boolean }) {
+  return (
+    <div className="flex min-h-7 items-center gap-2 text-sm text-zinc-300">
+      <span className="inline-flex size-4 shrink-0 items-center justify-center">
+        {active ? (
+          <FiLoader className="size-3.5 animate-spin text-sky-400" />
+        ) : (
+          <FiActivity className="size-3.5 text-zinc-500" />
+        )}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="relative inline-block max-w-full overflow-hidden align-bottom font-medium">
+          <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/25 to-transparent motion-safe:animate-[shimmer_1.4s_infinite]" />
+          <span className="relative truncate">Working through the next browser step</span>
+        </span>
+      </span>
+    </div>
+  );
 }
 
 function ReasoningStep({ step, active }: { step: Extract<TraceStep, { type: 'reasoning' }>; active: boolean }) {
@@ -319,9 +355,9 @@ function ReasoningStep({ step, active }: { step: Extract<TraceStep, { type: 'rea
   );
 }
 
-function ToolGroupStep({ calls }: { calls: ToolCall[] }) {
+function ToolGroupStep({ calls, active }: { calls: ToolCall[]; active: boolean }) {
   if (calls.length === 1) {
-    return <SingleToolStep call={calls[0]} />;
+    return <SingleToolStep call={calls[0]} active={active} />;
   }
 
   const failed = calls.some(call => call.state === 'output-error');
@@ -370,7 +406,7 @@ function ToolGroupStep({ calls }: { calls: ToolCall[] }) {
   );
 }
 
-function SingleToolStep({ call }: { call: ToolCall }) {
+function SingleToolStep({ call, active }: { call: ToolCall; active: boolean }) {
   return (
     <>
       <ChainOfThoughtTrigger leftIcon={getToolIcon(call)}>
@@ -384,7 +420,7 @@ function SingleToolStep({ call }: { call: ToolCall }) {
       {hasVisibleToolDetails(call) && (
         <ChainOfThoughtContent>
           <ChainOfThoughtItem>
-            <ToolDetails call={call.name === 'fill_form_fields' ? { ...call, input: undefined } : call} />
+            <ToolDetails call={call.name === 'fill_form_fields' ? { ...call, input: undefined } : call} active={active} />
           </ChainOfThoughtItem>
         </ChainOfThoughtContent>
       )}
@@ -411,13 +447,25 @@ function getPlannedFields(call: ToolCall): PlannedField[] {
     }));
 }
 
-function ToolDetails({ call }: { call: ToolCall }) {
+function ToolDetails({ call, active }: { call: ToolCall; active?: boolean }) {
+  const detailsRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    if (active && detailsRef.current) {
+      detailsRef.current.scrollTop = detailsRef.current.scrollHeight;
+    }
+  }, [active, call.input, call.output, call.errorText]);
+
   if (call.errorText) return <div className="text-rose-300">{call.errorText}</div>;
 
   const value = call.output ?? call.input;
   if (!value) return null;
 
-  return <pre className="max-h-40 overflow-auto whitespace-pre-wrap font-mono">{JSON.stringify(value, null, 2)}</pre>;
+  return (
+    <pre ref={detailsRef} className="max-h-40 overflow-auto whitespace-pre-wrap font-mono">
+      {JSON.stringify(value, null, 2)}
+    </pre>
+  );
 }
 
 function hasVisibleToolDetails(call: ToolCall) {
@@ -468,6 +516,9 @@ function formatToolName(name: string) {
 }
 
 function formatToolLabel(call: ToolCall) {
+  if (call.name === 'preparing_tool') {
+    return 'Preparing browser action...';
+  }
   if (call.name === 'fill_form_fields') {
     if (call.state === 'input-streaming') return 'Planning form fill...';
     const fieldCount = getPlannedFields(call).length;

@@ -379,6 +379,22 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
         } else if (ame.type === 'text_delta') {
           lastText += ame.delta;
           await context.emitEvent(Actors.NAVIGATOR, ExecutionState.STREAM_TEXT, ame.delta);
+        } else if (
+          ame.type === 'toolcall_start' ||
+          ame.type === 'toolcall_delta' ||
+          ame.type === 'toolcall_end'
+        ) {
+          const toolCall = extractToolCallFromAssistantEvent(ame);
+          if (toolCall) {
+            await context.emitEvent(
+              Actors.NAVIGATOR,
+              ExecutionState.ACT_START,
+              `${toolCall.name || 'preparing_tool'}: ${JSON.stringify({
+                toolCallId: toolCall.id,
+                input: toolCall.arguments,
+              })}`,
+            );
+          }
         }
         break;
       }
@@ -518,6 +534,42 @@ function extractToolResultText(result: unknown): string {
     })
     .filter(Boolean)
     .join('\n');
+}
+
+function extractToolCallFromAssistantEvent(event: unknown): { id?: string; name?: string; arguments?: unknown } | null {
+  if (!event || typeof event !== 'object') return null;
+  const record = event as Record<string, unknown>;
+
+  if (record.type === 'toolcall_end') {
+    const toolCall = record.toolCall;
+    if (toolCall && typeof toolCall === 'object') {
+      const call = toolCall as Record<string, unknown>;
+      return {
+        id: typeof call.id === 'string' ? call.id : undefined,
+        name: typeof call.name === 'string' ? call.name : undefined,
+        arguments: call.arguments,
+      };
+    }
+  }
+
+  const partial = record.partial;
+  const contentIndex = typeof record.contentIndex === 'number' ? record.contentIndex : undefined;
+  if (!partial || typeof partial !== 'object' || contentIndex === undefined) return null;
+
+  const content = (partial as { content?: unknown }).content;
+  if (!Array.isArray(content)) return null;
+
+  const block = content[contentIndex];
+  if (!block || typeof block !== 'object') return null;
+
+  const toolCall = block as Record<string, unknown>;
+  if (toolCall.type !== 'toolCall') return null;
+
+  return {
+    id: typeof toolCall.id === 'string' ? toolCall.id : undefined,
+    name: typeof toolCall.name === 'string' ? toolCall.name : undefined,
+    arguments: toolCall.arguments,
+  };
 }
 
 function extractAssistantError(msg: unknown): string {

@@ -257,7 +257,7 @@ const SidePanel = () => {
 
     setMessages(prev => {
       const filteredMessages = prev.filter((msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1));
-      if (newToolMessage && newToolMessage.state !== 'input-streaming') {
+      if (newToolMessage) {
         let replaceIndex = -1;
         for (let index = filteredMessages.length - 1; index >= 0; index -= 1) {
           const existingToolMessage = parseToolMessageContent(filteredMessages[index].content);
