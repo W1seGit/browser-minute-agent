@@ -60,6 +60,9 @@ export interface ChatHistoryStorage {
   // Add a message to a chat session
   addMessage: (sessionId: string, message: Message) => Promise<ChatMessage>;
 
+  // Replace all messages in a chat session
+  replaceMessages: (sessionId: string, messages: Message[]) => Promise<void>;
+
   // Delete a message from a chat session
   deleteMessage: (sessionId: string, messageId: string) => Promise<void>;
 

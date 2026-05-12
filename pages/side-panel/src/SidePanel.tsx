@@ -192,6 +192,7 @@ const SidePanel = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<number | null>(null);
+  const persistMessagesQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   // Check if providers are configured. The model itself is selected from the side panel.
   const checkModelConfiguration = useCallback(async () => {
@@ -250,138 +251,168 @@ const SidePanel = () => {
     sessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
 
-  const appendMessage = useCallback((newMessage: Message, sessionId?: string | null) => {
-    // Don't save progress messages
-    const isProgressMessage = newMessage.content === progressMessage;
-    const newToolMessage = parseToolMessageContent(newMessage.content);
+  const persistMessagesSnapshot = useCallback((sessionId: string | null | undefined, nextMessages: Message[]) => {
+    if (!sessionId) return;
 
-    setMessages(prev => {
-      const filteredMessages = prev.filter((msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1));
-      if (newToolMessage) {
-        let replaceIndex = -1;
-        for (let index = filteredMessages.length - 1; index >= 0; index -= 1) {
-          const existingToolMessage = parseToolMessageContent(filteredMessages[index].content);
-          const sameToolCall =
-            newToolMessage.id && existingToolMessage?.id
-              ? existingToolMessage.id === newToolMessage.id
-              : existingToolMessage?.name === newToolMessage.name && existingToolMessage.state === 'input-streaming';
-          if (sameToolCall) {
-            replaceIndex = index;
-            break;
+    const messagesToPersist = nextMessages.filter(message => message.content !== progressMessage);
+    persistMessagesQueueRef.current = persistMessagesQueueRef.current
+      .catch(() => undefined)
+      .then(() => chatHistoryStore.replaceMessages(sessionId, messagesToPersist))
+      .catch(err => console.error('Failed to save messages to history:', err));
+  }, []);
+
+  const appendMessage = useCallback(
+    (newMessage: Message, sessionId?: string | null) => {
+      // Don't save progress messages
+      const newToolMessage = parseToolMessageContent(newMessage.content);
+      const effectiveSessionId = sessionId !== undefined ? sessionId : sessionIdRef.current;
+
+      setMessages(prev => {
+        const filteredMessages = prev.filter(
+          (msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1),
+        );
+        let nextMessages: Message[];
+
+        if (newToolMessage) {
+          let replaceIndex = -1;
+          for (let index = filteredMessages.length - 1; index >= 0; index -= 1) {
+            const existingToolMessage = parseToolMessageContent(filteredMessages[index].content);
+            const sameToolCall =
+              newToolMessage.id && existingToolMessage?.id
+                ? existingToolMessage.id === newToolMessage.id
+                : existingToolMessage?.name === newToolMessage.name && existingToolMessage.state === 'input-streaming';
+            if (sameToolCall) {
+              replaceIndex = index;
+              break;
+            }
+          }
+
+          if (replaceIndex >= 0) {
+            const existingToolMessage = parseToolMessageContent(filteredMessages[replaceIndex].content);
+            const mergedMessage =
+              existingToolMessage && newToolMessage
+                ? {
+                    ...newMessage,
+                    content: `${TOOL_MESSAGE_PREFIX}${JSON.stringify({
+                      ...newToolMessage,
+                      input: newToolMessage.input ?? existingToolMessage.input,
+                    })}`,
+                  }
+                : newMessage;
+            nextMessages = [
+              ...filteredMessages.slice(0, replaceIndex),
+              mergedMessage,
+              ...filteredMessages.slice(replaceIndex + 1),
+            ];
+            persistMessagesSnapshot(effectiveSessionId, nextMessages);
+            return nextMessages;
+          }
+        }
+        nextMessages = [...filteredMessages, newMessage];
+        persistMessagesSnapshot(effectiveSessionId, nextMessages);
+        return nextMessages;
+      });
+
+      console.log('sessionId', effectiveSessionId);
+    },
+    [persistMessagesSnapshot],
+  );
+
+  const appendReasoningDelta = useCallback(
+    (actor: Actors, delta: string, timestamp: number) => {
+      if (!delta) return;
+
+      setMessages(prev => {
+        const filteredMessages = prev.filter(
+          (msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1),
+        );
+        const lastMessage = filteredMessages[filteredMessages.length - 1];
+        let nextMessages: Message[];
+
+        if (lastMessage?.actor === actor && lastMessage.content.startsWith(REASONING_MESSAGE_PREFIX)) {
+          try {
+            const parsed = JSON.parse(lastMessage.content.slice(REASONING_MESSAGE_PREFIX.length)) as { text?: string };
+            nextMessages = [
+              ...filteredMessages.slice(0, -1),
+              {
+                ...lastMessage,
+                content: createReasoningMessageContent(`${parsed.text ?? ''}${delta}`),
+                timestamp,
+              },
+            ];
+            persistMessagesSnapshot(sessionIdRef.current, nextMessages);
+            return nextMessages;
+          } catch {
+            return filteredMessages;
           }
         }
 
-        if (replaceIndex >= 0) {
-          const existingToolMessage = parseToolMessageContent(filteredMessages[replaceIndex].content);
-          const mergedMessage =
-            existingToolMessage && newToolMessage
-              ? {
-                  ...newMessage,
-                  content: `${TOOL_MESSAGE_PREFIX}${JSON.stringify({
-                    ...newToolMessage,
-                    input: newToolMessage.input ?? existingToolMessage.input,
-                  })}`,
-                }
-              : newMessage;
-          return [
-            ...filteredMessages.slice(0, replaceIndex),
-            mergedMessage,
-            ...filteredMessages.slice(replaceIndex + 1),
-          ];
-        }
-      }
-      return [...filteredMessages, newMessage];
-    });
+        nextMessages = [
+          ...filteredMessages,
+          {
+            actor,
+            content: createReasoningMessageContent(delta),
+            timestamp,
+          },
+        ];
+        persistMessagesSnapshot(sessionIdRef.current, nextMessages);
+        return nextMessages;
+      });
+    },
+    [persistMessagesSnapshot],
+  );
 
-    // Use provided sessionId if available, otherwise fall back to sessionIdRef.current
-    const effectiveSessionId = sessionId !== undefined ? sessionId : sessionIdRef.current;
+  const appendStreamDelta = useCallback(
+    (actor: Actors, delta: string, timestamp: number) => {
+      if (!delta) return;
 
-    console.log('sessionId', effectiveSessionId);
+      setMessages(prev => {
+        const filteredMessages = prev.filter(
+          (msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1),
+        );
+        const lastMessage = filteredMessages[filteredMessages.length - 1];
+        const previousContent =
+          lastMessage?.actor === actor && lastMessage.content === streamingMessageRef.current
+            ? streamingMessageRef.current
+            : '';
+        const content = previousContent + delta;
+        let nextMessages: Message[];
+        streamingMessageRef.current = content;
 
-    // Save message to storage if we have a session and it's not a progress message
-    if (effectiveSessionId && !isProgressMessage) {
-      chatHistoryStore
-        .addMessage(effectiveSessionId, newMessage)
-        .catch(err => console.error('Failed to save message to history:', err));
-    }
-  }, []);
-
-  const appendReasoningDelta = useCallback((actor: Actors, delta: string, timestamp: number) => {
-    if (!delta) return;
-
-    setMessages(prev => {
-      const filteredMessages = prev.filter((msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1));
-      const lastMessage = filteredMessages[filteredMessages.length - 1];
-
-      if (lastMessage?.actor === actor && lastMessage.content.startsWith(REASONING_MESSAGE_PREFIX)) {
-        try {
-          const parsed = JSON.parse(lastMessage.content.slice(REASONING_MESSAGE_PREFIX.length)) as { text?: string };
-          return [
+        if (lastMessage?.actor === actor && lastMessage.content === previousContent) {
+          nextMessages = [
             ...filteredMessages.slice(0, -1),
             {
               ...lastMessage,
-              content: createReasoningMessageContent(`${parsed.text ?? ''}${delta}`),
+              content,
               timestamp,
             },
           ];
-        } catch {
-          return filteredMessages;
+          persistMessagesSnapshot(sessionIdRef.current, nextMessages);
+          return nextMessages;
         }
-      }
 
-      return [
-        ...filteredMessages,
-        {
-          actor,
-          content: createReasoningMessageContent(delta),
-          timestamp,
-        },
-      ];
-    });
-  }, []);
-
-  const appendStreamDelta = useCallback((actor: Actors, delta: string, timestamp: number) => {
-    if (!delta) return;
-
-    setMessages(prev => {
-      const filteredMessages = prev.filter((msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1));
-      const lastMessage = filteredMessages[filteredMessages.length - 1];
-      const previousContent =
-        lastMessage?.actor === actor && lastMessage.content === streamingMessageRef.current
-          ? streamingMessageRef.current
-          : '';
-      const content = previousContent + delta;
-      streamingMessageRef.current = content;
-
-      if (lastMessage?.actor === actor && lastMessage.content === previousContent) {
-        return [
-          ...filteredMessages.slice(0, -1),
+        nextMessages = [
+          ...filteredMessages,
           {
-            ...lastMessage,
+            actor,
             content,
             timestamp,
           },
         ];
-      }
+        persistMessagesSnapshot(sessionIdRef.current, nextMessages);
+        return nextMessages;
+      });
+    },
+    [persistMessagesSnapshot],
+  );
 
-      return [
-        ...filteredMessages,
-        {
-          actor,
-          content,
-          timestamp,
-        },
-      ];
-    });
-  }, []);
-
-  const finalizeStreamingMessage = useCallback((actor: Actors, content: string, timestamp: number) => {
+  const finalizeStreamingMessage = useCallback((actor: Actors, _content: string, _timestamp: number) => {
     const streamedContent = streamingMessageRef.current;
     streamingMessageRef.current = '';
 
     if (!streamedContent) return false;
 
-    const finalMessage = { actor, content: streamedContent, timestamp };
     setMessages(prev => {
       const lastMessage = prev[prev.length - 1];
       if (lastMessage?.actor === actor && lastMessage.content === streamedContent) {
@@ -389,12 +420,6 @@ const SidePanel = () => {
       }
       return prev;
     });
-
-    if (sessionIdRef.current) {
-      chatHistoryStore
-        .addMessage(sessionIdRef.current, finalMessage)
-        .catch(err => console.error('Failed to save message to history:', err));
-    }
 
     return true;
   }, []);
