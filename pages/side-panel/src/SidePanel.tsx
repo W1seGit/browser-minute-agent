@@ -31,6 +31,19 @@ declare global {
 const TOOL_MESSAGE_PREFIX = '__bma_tool_call__:';
 const REASONING_MESSAGE_PREFIX = '__bma_reasoning__:';
 
+function MinuteAgentLogo() {
+  return (
+    <svg viewBox="0 0 32 32" className="size-8" role="img" aria-label="Minute Agent logo">
+      <rect width="32" height="32" rx="8" fill="#09090b" />
+      <rect x="1" y="1" width="30" height="30" rx="7" fill="#111113" stroke="#3f3f46" strokeWidth="1.5" />
+      <path d="M16 7.5a8.5 8.5 0 1 0 8.5 8.5" fill="none" stroke="#fdba74" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M16 16V10.8" stroke="#f4f4f5" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M16 16l4 2.6" stroke="#34d399" strokeWidth="2.2" strokeLinecap="round" />
+      <circle cx="16" cy="16" r="2" fill="#fdba74" />
+    </svg>
+  );
+}
+
 type ParsedToolDetails = {
   id?: string;
   name: string;
@@ -1286,19 +1299,18 @@ const SidePanel = () => {
                 className="inline-flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-100"
                 aria-label={t('nav_back_a11y')}>
                 <FiArrowLeft className="size-4" />
-                {t('nav_back')}
+                {t('nav_back').replace(/^←\s*/, '')}
               </button>
             ) : (
               <div className="flex min-w-0 items-center gap-3">
-                <div className="grid size-8 shrink-0 place-items-center rounded-md border border-zinc-800 bg-zinc-950 text-xs font-semibold text-orange-300">
-                  bm
+                <div className="shrink-0">
+                  <MinuteAgentLogo />
                 </div>
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-zinc-100">browser minute</div>
-                  <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
-                    <span className="size-1.5 rounded-full bg-emerald-400" />
-                    min-agent
-                  </div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-sm font-medium text-zinc-100">Minute</span>
+                  <span className="rounded-full border border-orange-300/30 bg-orange-300/10 px-2 py-0.5 text-[11px] font-medium text-orange-200">
+                    Agent
+                  </span>
                 </div>
               </div>
             )}
