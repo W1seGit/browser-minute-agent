@@ -1,6 +1,6 @@
 import type { Message as StorageMessage } from '@extension/storage';
 import { ACTOR_PROFILES } from '../types/message';
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useRef, useState, type RefObject } from 'react';
 import { FiActivity, FiAlertTriangle, FiCheck, FiCompass, FiCpu, FiLoader } from 'react-icons/fi';
 import { Message as PromptMessage, MessageContent } from './prompt-kit/message';
 import {
@@ -271,7 +271,7 @@ function RunTrace({ steps, active }: { steps: TraceStep[]; active: boolean }) {
           <ChainOfThought className="pl-1">
             {steps.map((step, index) => (
               <ChainOfThoughtStep
-                key={`${step.type}-${step.timestamp}-${index}`}
+                key={`${step.type}-${index}`}
                 defaultOpen={isOpenTraceStep(step, index, steps, active)}
                 isLast={index === steps.length - 1}>
                 {step.type === 'reasoning' ? (
@@ -449,23 +449,142 @@ function getPlannedFields(call: ToolCall): PlannedField[] {
 
 function ToolDetails({ call, active }: { call: ToolCall; active?: boolean }) {
   const detailsRef = useRef<HTMLPreElement>(null);
+  const [followDetails, setFollowDetails] = useState(true);
 
   useEffect(() => {
-    if (active && detailsRef.current) {
+    if (active && followDetails && detailsRef.current) {
       detailsRef.current.scrollTop = detailsRef.current.scrollHeight;
     }
-  }, [active, call.input, call.output, call.errorText]);
+  }, [active, followDetails, call.input, call.output, call.errorText]);
 
   if (call.errorText) return <div className="text-rose-300">{call.errorText}</div>;
 
   const value = call.output ?? call.input;
   if (!value) return null;
 
+  return <ReadableToolDetails call={call} value={value} refObject={detailsRef} onFollowChange={setFollowDetails} />;
+}
+
+function ReadableToolDetails({
+  call,
+  value,
+  refObject,
+  onFollowChange,
+}: {
+  call: ToolCall;
+  value: Record<string, unknown>;
+  refObject: RefObject<HTMLPreElement>;
+  onFollowChange: (follow: boolean) => void;
+}) {
+  const input = call.input ?? {};
+  const output = call.output ?? {};
+
+  if (call.name === 'input_text' && typeof input.text === 'string') {
+    return (
+      <div className="space-y-2">
+        <div className="text-[11px] font-medium uppercase tracking-normal text-zinc-500">Text to enter</div>
+        <pre
+          ref={refObject}
+          onScroll={event => onFollowChange(isNearScrollBottom(event.currentTarget))}
+          className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-zinc-800 bg-black/25 p-3 font-mono text-[11px] leading-5 text-zinc-300">
+          {input.text}
+        </pre>
+      </div>
+    );
+  }
+
+  const lines = describeToolDetails(call, value);
   return (
-    <pre ref={detailsRef} className="max-h-40 overflow-auto whitespace-pre-wrap font-mono">
-      {JSON.stringify(value, null, 2)}
+    <pre
+      ref={refObject}
+      onScroll={event => onFollowChange(isNearScrollBottom(event.currentTarget))}
+      className="max-h-48 overflow-auto whitespace-pre-wrap font-sans text-xs leading-5 text-zinc-400">
+      {lines.join('\n')}
     </pre>
   );
+}
+
+function isNearScrollBottom(element: HTMLElement) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+}
+
+function describeToolDetails(call: ToolCall, value: Record<string, unknown>) {
+  const input = call.input ?? {};
+  const output = call.output ?? {};
+  const result = typeof output.result === 'string' ? output.result : undefined;
+
+  if (call.name === 'click_element') {
+    return compactLines([formatIndexLine(input.index), result ? `Result: ${result}` : undefined]);
+  }
+
+  if (call.name === 'send_keys') {
+    return compactLines([
+      typeof input.keys === 'string' ? `Keys: ${input.keys}` : undefined,
+      result && `Result: ${result}`,
+    ]);
+  }
+
+  if (call.name === 'scroll') {
+    return compactLines([
+      typeof input.direction === 'string' ? `Direction: ${input.direction}` : undefined,
+      formatIndexLine(input.index),
+      result && `Result: ${result}`,
+    ]);
+  }
+
+  if (call.name === 'select_dropdown_option') {
+    return compactLines([
+      formatIndexLine(input.index),
+      typeof input.text === 'string' ? `Selected option: ${input.text}` : undefined,
+      result && `Result: ${result}`,
+    ]);
+  }
+
+  if (call.name === 'fill_form_fields') {
+    const fields = getPlannedFields(call);
+    if (fields.length > 0) {
+      return [
+        `Fields queued: ${fields.length}`,
+        ...fields.map(field => `${field.label || `Field ${field.index}`}: ${field.text ?? ''}`),
+      ];
+    }
+  }
+
+  if (result) return [`Result: ${result}`];
+  return objectToEnglishLines(value);
+}
+
+function formatIndexLine(index: unknown) {
+  return typeof index === 'number' ? `Element index: ${index}` : undefined;
+}
+
+function compactLines(lines: Array<string | false | undefined>) {
+  return lines.filter((line): line is string => Boolean(line));
+}
+
+function objectToEnglishLines(value: unknown, prefix = ''): string[] {
+  if (!value || typeof value !== 'object') {
+    return [`${prefix || 'Value'}: ${String(value)}`];
+  }
+
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, nestedValue]) => {
+    const label = prefix ? `${prefix} ${formatObjectKey(key)}` : formatObjectKey(key);
+    if (nestedValue && typeof nestedValue === 'object' && !Array.isArray(nestedValue)) {
+      return objectToEnglishLines(nestedValue, label);
+    }
+    if (Array.isArray(nestedValue)) {
+      const text = nestedValue.map(item => (typeof item === 'object' ? JSON.stringify(item) : String(item))).join(', ');
+      return [`${label}: ${text}`];
+    }
+    return [`${label}: ${String(nestedValue)}`];
+  });
+}
+
+function formatObjectKey(key: string) {
+  return key
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\b\w/g, char => char.toUpperCase());
 }
 
 function hasVisibleToolDetails(call: ToolCall) {
