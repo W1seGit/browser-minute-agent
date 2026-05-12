@@ -666,6 +666,60 @@ export default class Page {
     }
   }
 
+  async scroll(direction: 'top' | 'bottom' | 'up' | 'down', elementNode?: DOMElementNode): Promise<void> {
+    if (!this._puppeteerPage) {
+      throw new Error('Puppeteer is not connected');
+    }
+
+    if (elementNode) {
+      const element = await this.locateElement(elementNode);
+      if (!element) {
+        throw new Error(`Element: ${elementNode} not found`);
+      }
+
+      const scrollableElement = await this._findNearestScrollableElement(element);
+      if (!scrollableElement) {
+        throw new Error(`No scrollable ancestor found for element: ${elementNode}`);
+      }
+
+      await scrollableElement.evaluate((el, dir) => {
+        const amount = Math.max(1, Math.floor(el.clientHeight * 0.9));
+        if (dir === 'top') el.scrollTo({ top: 0, behavior: 'smooth' });
+        if (dir === 'bottom') el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+        if (dir === 'up') el.scrollBy({ top: -amount, behavior: 'smooth' });
+        if (dir === 'down') el.scrollBy({ top: amount, behavior: 'smooth' });
+      }, direction);
+      return;
+    }
+
+    await this._puppeteerPage.evaluate(dir => {
+      const canScroll = (el: Element | null): el is HTMLElement =>
+        el instanceof HTMLElement && el.scrollHeight > el.clientHeight + 1;
+      const active = document.activeElement;
+      const candidates = [
+        canScroll(active) ? active : null,
+        document.scrollingElement,
+        document.documentElement,
+        document.body,
+        ...Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], .main, .content, .container, div')),
+      ].filter((el): el is HTMLElement | Element => Boolean(el));
+
+      const target =
+        candidates.find(el => {
+          const maxScrollTop = el.scrollHeight - el.clientHeight;
+          return maxScrollTop > 1;
+        }) ??
+        document.scrollingElement ??
+        document.documentElement;
+
+      const amount = Math.max(1, Math.floor((window.visualViewport?.height || window.innerHeight) * 0.9));
+      if (dir === 'top') target.scrollTo({ top: 0, behavior: 'smooth' });
+      if (dir === 'bottom') target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' });
+      if (dir === 'up') target.scrollBy({ top: -amount, behavior: 'smooth' });
+      if (dir === 'down') target.scrollBy({ top: amount, behavior: 'smooth' });
+    }, direction);
+  }
+
   async scrollToPreviousPage(elementNode?: DOMElementNode): Promise<void> {
     if (!this._puppeteerPage) {
       throw new Error('Puppeteer is not connected');
@@ -835,7 +889,9 @@ export default class Page {
       if (beforeInput?.kind === 'native') {
         const typed = await this._puppeteerPage.evaluate((previousValue: string) => {
           const el = document.activeElement;
-          return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el.value !== previousValue : true;
+          return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+            ? el.value !== previousValue
+            : true;
         }, beforeInput.value ?? '');
 
         if (!typed) {

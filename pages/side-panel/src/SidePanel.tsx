@@ -379,19 +379,15 @@ const SidePanel = () => {
     const streamedContent = streamingMessageRef.current;
     streamingMessageRef.current = '';
 
-    if (!streamedContent || !content) return false;
+    if (!streamedContent) return false;
 
-    const finalContent = content.includes(streamedContent) ? content : streamedContent;
-    const finalMessage = { actor, content: finalContent, timestamp };
+    const finalMessage = { actor, content: streamedContent, timestamp };
     setMessages(prev => {
       const lastMessage = prev[prev.length - 1];
       if (lastMessage?.actor === actor && lastMessage.content === streamedContent) {
-        return [...prev.slice(0, -1), finalMessage];
-      }
-      if (lastMessage?.actor === actor && lastMessage.content === content) {
         return prev;
       }
-      return [...prev, finalMessage];
+      return prev;
     });
 
     if (sessionIdRef.current) {
@@ -429,13 +425,13 @@ const SidePanel = () => {
               setIsFollowUpMode(true);
               setInputEnabled(true);
               setShowStopButton(false);
-              skip = false;
+              skip = !content;
               break;
             case ExecutionState.TASK_CANCEL:
               setIsFollowUpMode(false);
               setInputEnabled(true);
               setShowStopButton(false);
-              skip = false;
+              skip = !content;
               break;
             case ExecutionState.TASK_PAUSE:
               break;
@@ -465,13 +461,13 @@ const SidePanel = () => {
               setIsFollowUpMode(true);
               setInputEnabled(true);
               setShowStopButton(false);
-              skip = false;
+              skip = !content;
               break;
             case ExecutionState.TASK_CANCEL:
               setIsFollowUpMode(false);
               setInputEnabled(true);
               setShowStopButton(false);
-              skip = false;
+              skip = !content;
               break;
             case ExecutionState.STEP_START:
               displayProgress = true;
@@ -571,7 +567,7 @@ const SidePanel = () => {
         });
       }
     },
-    [appendMessage, appendStreamDelta, finalizeStreamingMessage],
+    [appendMessage, appendReasoningDelta, appendStreamDelta, finalizeStreamingMessage],
   );
 
   // Stop heartbeat and close connection
@@ -1397,7 +1393,7 @@ const SidePanel = () => {
                     ref={messagesScrollRef}
                     onScroll={handleMessagesScroll}
                     className="scrollbar-gutter-stable relative flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth bg-bma-bg">
-                    <MessageList messages={messages} />
+                    <MessageList messages={messages} isWorking={showStopButton} />
                     <div ref={messagesEndRef} />
                     {!autoFollowMessages && showStopButton && (
                       <button

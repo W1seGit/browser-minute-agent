@@ -1,7 +1,6 @@
 import { Type, type TSchema, type Static } from 'typebox';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { ActionResult, type AgentContext } from '../types';
-import { Actors, ExecutionState } from '../event/types';
 import { createLogger } from '@src/background/log';
 import { t } from '@extension/i18n';
 
@@ -40,19 +39,23 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
     createTool(
       'done',
       'done',
-      'Complete the task and provide the final answer',
+      'Complete the task. Prefer streaming the final answer as normal assistant text before calling this tool with an empty text value.',
       Type.Object({
-        text: Type.String({ description: 'final answer or summary' }),
+        text: Type.Optional(
+          Type.String({ default: '', description: 'leave empty; final answers must be normal assistant text' }),
+        ),
         success: Type.Optional(Type.Boolean({ default: true })),
       }),
       async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
-        if (params.text) {
-          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.STREAM_TEXT, params.text);
-        }
-        context.finalAnswer = params.text;
-        const result = new ActionResult({ isDone: true, success: params.success, extractedContent: params.text });
+        const text = params.text ?? '';
+        context.finalAnswer = text;
+        const result = new ActionResult({
+          isDone: true,
+          success: params.success,
+          extractedContent: text || 'Task completed',
+        });
         if (ctx.onDone) {
-          ctx.onDone(params.text, params.success ?? true);
+          ctx.onDone(text, params.success ?? true);
         }
         return buildResult(result);
       },
@@ -261,12 +264,14 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
     ),
 
     createTool(
-      'scroll_to_percent',
-      'scroll_to_percent',
-      'Scrolls to a particular vertical percentage of the document or an element. If no index of element is specified, scroll the whole document.',
+      'scroll',
+      'scroll',
+      'Scroll the page or a scrollable element. Use direction "down" or "up" to move one page, or "top"/"bottom" to jump to the start/end. This does not rely on PageUp/PageDown keys, so it works even when an input is focused.',
       Type.Object({
         intent: optionalIntent,
-        yPercent: Type.Number({ description: 'percentage to scroll to - min 0, max 100; 0 is top, 100 is bottom' }),
+        direction: Type.Union([Type.Literal('top'), Type.Literal('bottom'), Type.Literal('up'), Type.Literal('down')], {
+          description: 'scroll direction',
+        }),
         index: Type.Optional(Type.Union([Type.Number(), Type.Null()], { description: 'index of the element' })),
       }),
       async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
@@ -274,84 +279,8 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         const page = await context.browserContext.getCurrentPage();
         const state = await page.getState();
         const elementNode = params.index != null ? state?.selectorMap.get(params.index) : undefined;
-        await page.scrollToPercent(params.yPercent, elementNode);
-        const msg = t('act_scrollToPercent_ok', [params.yPercent.toString()]);
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
-      },
-    ),
-
-    createTool(
-      'scroll_to_top',
-      'scroll_to_top',
-      'Scroll the document in the window or an element to the top',
-      Type.Object({
-        intent: optionalIntent,
-        index: Type.Optional(Type.Union([Type.Number(), Type.Null()], { description: 'index of the element' })),
-      }),
-      async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
-        void params.intent;
-        const page = await context.browserContext.getCurrentPage();
-        const state = await page.getState();
-        const elementNode = params.index != null ? state?.selectorMap.get(params.index) : undefined;
-        await page.scrollToPercent(0, elementNode);
-        const msg = t('act_scrollToTop_ok');
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
-      },
-    ),
-
-    createTool(
-      'scroll_to_bottom',
-      'scroll_to_bottom',
-      'Scroll the document in the window or an element to the bottom',
-      Type.Object({
-        intent: optionalIntent,
-        index: Type.Optional(Type.Union([Type.Number(), Type.Null()], { description: 'index of the element' })),
-      }),
-      async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
-        void params.intent;
-        const page = await context.browserContext.getCurrentPage();
-        const state = await page.getState();
-        const elementNode = params.index != null ? state?.selectorMap.get(params.index) : undefined;
-        await page.scrollToPercent(100, elementNode);
-        const msg = t('act_scrollToBottom_ok');
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
-      },
-    ),
-
-    createTool(
-      'previous_page',
-      'previous_page',
-      'Scroll the document in the window or an element to the previous page. If no index is specified, scroll the whole document.',
-      Type.Object({
-        intent: optionalIntent,
-        index: Type.Optional(Type.Union([Type.Number(), Type.Null()], { description: 'index of the element' })),
-      }),
-      async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
-        void params.intent;
-        const page = await context.browserContext.getCurrentPage();
-        const state = await page.getState();
-        const elementNode = params.index != null ? state?.selectorMap.get(params.index) : undefined;
-        await page.scrollToPreviousPage(elementNode);
-        const msg = t('act_previousPage_ok');
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
-      },
-    ),
-
-    createTool(
-      'next_page',
-      'next_page',
-      'Scroll the document in the window or an element to the next page. If no index is specified, scroll the whole document.',
-      Type.Object({
-        intent: optionalIntent,
-        index: Type.Optional(Type.Union([Type.Number(), Type.Null()], { description: 'index of the element' })),
-      }),
-      async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
-        void params.intent;
-        const page = await context.browserContext.getCurrentPage();
-        const state = await page.getState();
-        const elementNode = params.index != null ? state?.selectorMap.get(params.index) : undefined;
-        await page.scrollToNextPage(elementNode);
-        const msg = t('act_nextPage_ok');
+        await page.scroll(params.direction, elementNode);
+        const msg = `Scrolled ${params.direction}`;
         return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
       },
     ),

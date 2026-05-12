@@ -10,14 +10,16 @@ import {
   ChainOfThoughtStep,
   ChainOfThoughtTrigger,
 } from './prompt-kit/chain-of-thought';
+import { Steps, StepsContent, StepsTrigger } from './prompt-kit/steps';
 import type { ToolPart } from './prompt-kit/tool';
 
 interface MessageListProps {
   messages: StorageMessage[];
+  isWorking?: boolean;
 }
 
-export default memo(function MessageList({ messages }: MessageListProps) {
-  const items = buildDisplayItems(messages);
+export default memo(function MessageList({ messages, isWorking = false }: MessageListProps) {
+  const items = buildDisplayItems(messages, isWorking);
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-3 py-5">
@@ -25,9 +27,9 @@ export default memo(function MessageList({ messages }: MessageListProps) {
         if (item.type === 'trace') {
           return (
             <RunTrace
-              key={`trace-${item.steps[0]?.timestamp}-${index}`}
+              key={`trace-${item.steps[0]?.timestamp}-${index}-${item.active ? 'active' : 'done'}`}
               steps={item.steps}
-              active={index === items.length - 1}
+              active={item.active}
             />
           );
         }
@@ -72,10 +74,13 @@ function MessageBlock({ message, isSameActor }: MessageBlockProps) {
         )}
 
         {isProgress ? (
-          <MessageContent className="border border-zinc-800 bg-[#111113] text-zinc-100">
+          <MessageContent className="border-transparent bg-transparent px-0 py-0 text-zinc-100 shadow-none">
             <div className="flex items-center gap-2 text-sm text-zinc-400">
-              <FiActivity className="size-4 animate-pulse text-sky-300" />
-              <span>Working through the next browser step</span>
+              <FiActivity className="size-4 text-sky-300" />
+              <span className="relative overflow-hidden font-medium">
+                <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/30 to-transparent motion-safe:animate-[shimmer_1.4s_infinite]" />
+                <span className="relative">Working through the next browser step</span>
+              </span>
             </div>
           </MessageContent>
         ) : (
@@ -112,15 +117,17 @@ type TraceStep =
 const TOOL_MESSAGE_PREFIX = '__bma_tool_call__:';
 const REASONING_MESSAGE_PREFIX = '__bma_reasoning__:';
 
-type DisplayItem = { type: 'message'; message: StorageMessage } | { type: 'trace'; steps: TraceStep[] };
+type DisplayItem =
+  | { type: 'message'; message: StorageMessage }
+  | { type: 'trace'; steps: TraceStep[]; active: boolean };
 
-function buildDisplayItems(messages: StorageMessage[]): DisplayItem[] {
+function buildDisplayItems(messages: StorageMessage[], isWorking: boolean): DisplayItem[] {
   const items: DisplayItem[] = [];
   let traceSteps: TraceStep[] = [];
 
-  const flushTrace = () => {
+  const flushTrace = (active = false) => {
     if (traceSteps.length > 0) {
-      items.push({ type: 'trace', steps: traceSteps });
+      items.push({ type: 'trace', steps: traceSteps, active });
       traceSteps = [];
     }
   };
@@ -147,11 +154,11 @@ function buildDisplayItems(messages: StorageMessage[]): DisplayItem[] {
       return;
     }
 
-    flushTrace();
+    flushTrace(false);
     items.push({ type: 'message', message });
   });
 
-  flushTrace();
+  flushTrace(isWorking);
   return items;
 }
 
@@ -226,22 +233,46 @@ function stableStringify(value: unknown): string {
 }
 
 function RunTrace({ steps, active }: { steps: TraceStep[]; active: boolean }) {
+  const actionCount = steps.reduce((count, step) => count + (step.type === 'tools' ? step.calls.length : 0), 0);
+  const reasoningCount = steps.filter(step => step.type === 'reasoning').length;
+  const running = active;
+
   return (
     <div className="mx-auto w-full max-w-3xl px-1 py-1">
-      <ChainOfThought className="pl-1">
-        {steps.map((step, index) => (
-          <ChainOfThoughtStep
-            key={`${step.type}-${step.timestamp}-${index}`}
-            defaultOpen={isOpenTraceStep(step, index, steps, active)}
-            isLast={index === steps.length - 1}>
-            {step.type === 'reasoning' ? (
-              <ReasoningStep step={step} active={active && index === steps.length - 1} />
+      <Steps defaultOpen={active}>
+        <StepsTrigger
+          leftIcon={
+            running ? (
+              <FiLoader className="size-4 animate-spin text-sky-400" />
             ) : (
-              <ToolGroupStep calls={step.calls} />
-            )}
-          </ChainOfThoughtStep>
-        ))}
-      </ChainOfThought>
+              <FiCheck className="size-4 text-emerald-400" />
+            )
+          }
+          className="min-h-8 text-zinc-400 hover:text-zinc-100">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate">{running ? 'Working through steps' : 'Run steps'}</span>
+            <span className="shrink-0 text-[11px] text-zinc-500">
+              {reasoningCount} reasoning · {actionCount} actions
+            </span>
+          </span>
+        </StepsTrigger>
+        <StepsContent className="mt-0">
+          <ChainOfThought className="pl-1">
+            {steps.map((step, index) => (
+              <ChainOfThoughtStep
+                key={`${step.type}-${step.timestamp}-${index}`}
+                defaultOpen={isOpenTraceStep(step, index, steps, active)}
+                isLast={index === steps.length - 1}>
+                {step.type === 'reasoning' ? (
+                  <ReasoningStep step={step} active={active && index === steps.length - 1} />
+                ) : (
+                  <ToolGroupStep calls={step.calls} />
+                )}
+              </ChainOfThoughtStep>
+            ))}
+          </ChainOfThought>
+        </StepsContent>
+      </Steps>
     </div>
   );
 }

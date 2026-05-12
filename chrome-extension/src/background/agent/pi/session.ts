@@ -266,6 +266,7 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
   const piStreamOptions = createPiStreamOptions(providerConfig, modelConfig);
   const thinkingLevel = modelConfig.reasoningEffort ?? 'medium';
   let finalSuccess = true;
+  let doneCalled = false;
   let terminalFailure: string | null = null;
   const underspecifiedTypingTask = isUnderspecifiedTypingTask(task);
 
@@ -273,6 +274,7 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
   const toolCtx: PiToolContext = {
     agentContext: context,
     onDone: (text, success) => {
+      doneCalled = true;
       context.finalAnswer = text;
       finalSuccess = success;
     },
@@ -338,14 +340,16 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
           break;
         }
         const finalAnswer = context.finalAnswer;
-        if (finalAnswer && finalSuccess) {
-          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_OK, finalAnswer);
+        if (doneCalled && finalSuccess) {
+          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_OK, '');
+        } else if (doneCalled) {
+          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_FAIL, '');
+        } else if (finalAnswer && finalSuccess) {
+          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_OK, '');
         } else if (finalAnswer) {
-          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_FAIL, finalAnswer);
+          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_FAIL, '');
         } else {
-          // Extract final text from last assistant message
-          const text = extractTextFromMessage(lastMsg);
-          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_OK, text || 'Task completed');
+          await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_OK, '');
         }
         break;
       }
@@ -440,15 +444,24 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
 
       // Surface recent tool results prominently so the model cannot miss what it already did
       const recentActions = messages
-        .filter((m): m is AgentMessage & { role: 'toolResult'; toolName: string; isError: boolean; content: Array<{ type: string; text?: string }> } => {
-          if (m.role !== 'toolResult') return false;
-          const record = m as unknown as Record<string, unknown>;
-          const content = Array.isArray(record.content) ? record.content : [];
-          return content.some((c: unknown) => {
-            const item = c as Record<string, unknown>;
-            return c && typeof c === 'object' && item.type === 'text';
-          });
-        })
+        .filter(
+          (
+            m,
+          ): m is AgentMessage & {
+            role: 'toolResult';
+            toolName: string;
+            isError: boolean;
+            content: Array<{ type: string; text?: string }>;
+          } => {
+            if (m.role !== 'toolResult') return false;
+            const record = m as unknown as Record<string, unknown>;
+            const content = Array.isArray(record.content) ? record.content : [];
+            return content.some((c: unknown) => {
+              const item = c as Record<string, unknown>;
+              return c && typeof c === 'object' && item.type === 'text';
+            });
+          },
+        )
         .slice(-10)
         .map(m => {
           const text = m.content
@@ -462,9 +475,8 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
         })
         .join('\n');
 
-      const recentActionsSection = recentActions.length > 0
-        ? `\n\nRecent actions (do not repeat):\n${recentActions}`
-        : '';
+      const recentActionsSection =
+        recentActions.length > 0 ? `\n\nRecent actions (do not repeat):\n${recentActions}` : '';
 
       const stateMessage = {
         role: 'user' as const,
@@ -506,21 +518,6 @@ function extractToolResultText(result: unknown): string {
     })
     .filter(Boolean)
     .join('\n');
-}
-
-function extractTextFromMessage(msg: unknown): string {
-  if (!msg || typeof msg !== 'object') return '';
-  const m = msg as Record<string, unknown>;
-  if (Array.isArray(m.content)) {
-    return m.content
-      .filter((c: unknown) => (c as Record<string, unknown>)?.type === 'text')
-      .map((c: unknown) => (c as Record<string, unknown>).text as string)
-      .join('');
-  }
-  if (typeof m.content === 'string') {
-    return m.content;
-  }
-  return '';
 }
 
 function extractAssistantError(msg: unknown): string {
