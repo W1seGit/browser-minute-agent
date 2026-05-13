@@ -44,6 +44,10 @@ export enum ExecutionState {
   ACT_START = 'act.start',
   ACT_OK = 'act.ok',
   ACT_FAIL = 'act.fail',
+
+  // Streaming states for thinking and text tokens
+  STREAM_THINKING = 'stream.thinking',
+  STREAM_TEXT = 'stream.text',
 }
 
 export interface EventData {

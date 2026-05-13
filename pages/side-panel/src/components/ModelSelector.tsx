@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   agentModelStore,
   AgentNameEnum,
+  getDefaultAgentModelParams,
   getDefaultDisplayNameFromProviderId,
-  llmProviderModelNames,
   llmProviderStore,
+  piModelRegistry,
   ProviderTypeEnum,
+  type PiRegistryProvider,
   type ProviderConfig,
 } from '@extension/storage';
 
@@ -15,40 +17,98 @@ interface ProviderOption {
   config: ProviderConfig;
 }
 
+interface ModelOption {
+  providerId: string;
+  providerName: string;
+  providerType: string;
+  model: string;
+}
+
 interface ModelSelectorProps {
   onModelConfigured?: () => void;
 }
+
+const providerToPiProvider: Partial<Record<ProviderTypeEnum, PiRegistryProvider>> = {
+  [ProviderTypeEnum.OpenAI]: 'openai',
+  [ProviderTypeEnum.Anthropic]: 'anthropic',
+  [ProviderTypeEnum.DeepSeek]: 'deepseek',
+  [ProviderTypeEnum.Gemini]: 'google',
+  [ProviderTypeEnum.Grok]: 'xai',
+  [ProviderTypeEnum.Xai]: 'xai',
+  [ProviderTypeEnum.Groq]: 'groq',
+  [ProviderTypeEnum.Cerebras]: 'cerebras',
+  [ProviderTypeEnum.Ollama]: 'openrouter',
+  [ProviderTypeEnum.AzureOpenAI]: 'azure-openai-responses',
+  [ProviderTypeEnum.OpenRouter]: 'openrouter',
+  [ProviderTypeEnum.Llama]: 'openrouter',
+  [ProviderTypeEnum.Fireworks]: 'fireworks',
+  [ProviderTypeEnum.Together]: 'openrouter',
+  [ProviderTypeEnum.Mistral]: 'mistral',
+  [ProviderTypeEnum.Nebius]: 'openrouter',
+  [ProviderTypeEnum.Zai]: 'zai',
+  [ProviderTypeEnum.BigModel]: 'zai',
+  [ProviderTypeEnum.Aliyun]: 'openrouter',
+  [ProviderTypeEnum.Cohere]: 'openrouter',
+  [ProviderTypeEnum.OllamaCloud]: 'openrouter',
+  [ProviderTypeEnum.GithubCopilot]: 'github-copilot',
+  [ProviderTypeEnum.AmazonBedrock]: 'amazon-bedrock',
+  [ProviderTypeEnum.CloudflareWorkersAI]: 'cloudflare-workers-ai',
+  [ProviderTypeEnum.CloudflareAIGateway]: 'cloudflare-ai-gateway',
+  [ProviderTypeEnum.GoogleVertex]: 'google-vertex',
+  [ProviderTypeEnum.VercelAIGateway]: 'vercel-ai-gateway',
+  [ProviderTypeEnum.OpenAICodex]: 'openai-codex',
+  [ProviderTypeEnum.OpenCode]: 'opencode',
+  [ProviderTypeEnum.OpenCodeGo]: 'opencode-go',
+  [ProviderTypeEnum.HuggingFace]: 'huggingface',
+  [ProviderTypeEnum.KimiCoding]: 'kimi-coding',
+  [ProviderTypeEnum.MiniMax]: 'minimax',
+  [ProviderTypeEnum.MiniMaxCN]: 'minimax-cn',
+  [ProviderTypeEnum.MoonshotAI]: 'moonshotai',
+  [ProviderTypeEnum.MoonshotAICN]: 'moonshotai-cn',
+  [ProviderTypeEnum.Xiaomi]: 'xiaomi',
+  [ProviderTypeEnum.XiaomiTokenPlanAMS]: 'xiaomi-token-plan-ams',
+  [ProviderTypeEnum.XiaomiTokenPlanCN]: 'xiaomi-token-plan-cn',
+  [ProviderTypeEnum.XiaomiTokenPlanSGP]: 'xiaomi-token-plan-sgp',
+};
 
 function getProviderModels(providerId: string, config: ProviderConfig): string[] {
   if (config.type === ProviderTypeEnum.AzureOpenAI) {
     return config.azureDeploymentNames || [];
   }
-
-  return config.modelNames || llmProviderModelNames[providerId as keyof typeof llmProviderModelNames] || [];
-}
-
-function getDefaultParameters(providerId: string): Record<string, number> {
-  return {
-    temperature: providerId === ProviderTypeEnum.Ollama ? 0.1 : 0.3,
-    topP: providerId === ProviderTypeEnum.Ollama ? 0.85 : 0.85,
-  };
+  if (config.type === ProviderTypeEnum.CustomOpenAI) {
+    return config.modelNames || [];
+  }
+  const piProvider = providerToPiProvider[config.type as ProviderTypeEnum];
+  return piProvider ? [...piModelRegistry[piProvider]] : config.modelNames || [];
 }
 
 export default function ModelSelector({ onModelConfigured }: ModelSelectorProps) {
   const [providers, setProviders] = useState<ProviderOption[]>([]);
-  const [selectedProviderId, setSelectedProviderId] = useState('');
-  const [selectedModel, setSelectedModel] = useState('');
+  const [selectedValue, setSelectedValue] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [query, setQuery] = useState('');
 
-  const selectedProvider = useMemo(
-    () => providers.find(provider => provider.id === selectedProviderId),
-    [providers, selectedProviderId],
+  const modelOptions = useMemo<ModelOption[]>(
+    () =>
+      providers.flatMap(provider =>
+        getProviderModels(provider.id, provider.config).map(model => ({
+          providerId: provider.id,
+          providerName: provider.name,
+          providerType: provider.config.type || provider.id,
+          model,
+        })),
+      ),
+    [providers],
   );
-  const models = useMemo(
-    () => (selectedProvider ? getProviderModels(selectedProvider.id, selectedProvider.config) : []),
-    [selectedProvider],
-  );
+
+  const filteredModels = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return modelOptions;
+    return modelOptions.filter(option =>
+      `${option.providerName} ${option.model}`.toLowerCase().includes(normalizedQuery),
+    );
+  }, [modelOptions, query]);
 
   const loadOptions = useCallback(async () => {
     const [providerRecord, navigatorModel] = await Promise.all([
@@ -58,7 +118,7 @@ export default function ModelSelector({ onModelConfigured }: ModelSelectorProps)
 
     const providerOptions = Object.entries(providerRecord).map(([id, config]) => ({
       id,
-      name: config.name || getDefaultDisplayNameFromProviderId(id),
+      name: getDefaultDisplayNameFromProviderId(config.type || id),
       config,
     }));
 
@@ -67,36 +127,26 @@ export default function ModelSelector({ onModelConfigured }: ModelSelectorProps)
     const initialProviderId = navigatorModel?.provider || providerOptions[0]?.id || '';
     const initialProvider = providerOptions.find(provider => provider.id === initialProviderId);
     const initialModels = initialProvider ? getProviderModels(initialProvider.id, initialProvider.config) : [];
+    const initialModel = navigatorModel?.modelName || initialModels[0] || '';
 
-    setSelectedProviderId(initialProviderId);
-    setSelectedModel(navigatorModel?.modelName || initialModels[0] || '');
+    setSelectedValue(initialProviderId && initialModel ? `${initialProviderId}>${initialModel}` : '');
   }, []);
 
   useEffect(() => {
     loadOptions().catch(error => console.error('Failed to load model selector options:', error));
   }, [loadOptions]);
 
-  const handleProviderChange = (providerId: string) => {
-    const provider = providers.find(item => item.id === providerId);
-    const providerModels = provider ? getProviderModels(provider.id, provider.config) : [];
-
-    setSelectedProviderId(providerId);
-    setSelectedModel(providerModels[0] || '');
-  };
-
-  const saveModel = async (modelName = selectedModel, providerId = selectedProviderId) => {
-    if (!providerId || !modelName) return;
+  const saveModel = async (option: ModelOption) => {
+    if (!option.providerId || !option.model) return;
 
     setIsSaving(true);
     try {
-      const provider = providers.find(item => item.id === providerId);
       await agentModelStore.setAgentModel(AgentNameEnum.MinAgent, {
-        provider: providerId,
-        modelName,
-        parameters: getDefaultParameters(provider?.config.type || providerId),
+        provider: option.providerId,
+        modelName: option.model,
+        parameters: getDefaultAgentModelParams(option.providerType, AgentNameEnum.MinAgent),
       });
-      setSelectedProviderId(providerId);
-      setSelectedModel(modelName);
+      setSelectedValue(`${option.providerId}>${option.model}`);
       onModelConfigured?.();
       setIsOpen(false);
     } finally {
@@ -104,64 +154,66 @@ export default function ModelSelector({ onModelConfigured }: ModelSelectorProps)
     }
   };
 
-  const currentLabel = selectedModel || 'Select model';
-  const providerLabel = selectedProvider?.name || 'Provider';
+  const selectedOption = modelOptions.find(option => `${option.providerId}>${option.model}` === selectedValue);
+  const currentLabel = selectedOption?.model || 'Select model';
 
   return (
     <div className="relative">
       <button
         type="button"
         onClick={() => setIsOpen(value => !value)}
-        className="flex max-w-[220px] items-center gap-2 rounded-full border border-white/15 bg-white/[0.06] px-3 py-1.5 text-sm text-white transition-colors hover:border-white/35 hover:bg-white/[0.09]"
+        className="flex max-w-[220px] cursor-pointer items-center gap-2 rounded-md border border-zinc-800 bg-[#111113] px-3 py-1.5 text-sm text-zinc-200 transition-colors hover:border-zinc-700 hover:bg-zinc-900"
         title={currentLabel}>
-        <span className="size-1.5 rounded-full bg-white/70" />
+        <span className="size-1.5 rounded-full bg-orange-300" />
         <span className="truncate">{currentLabel}</span>
       </button>
 
       {isOpen && (
-        <div className="absolute bottom-full right-0 z-30 mb-3 w-[340px] overflow-hidden rounded-2xl border border-white/10 bg-[#080808] text-white shadow-2xl shadow-black/60">
-          <div className="border-b border-white/10 p-3">
-            <label
-              className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-white/45"
-              htmlFor="provider-select">
-              Provider
+        <div className="absolute bottom-full right-0 z-30 mb-3 w-[340px] overflow-hidden rounded-lg border border-zinc-800 bg-[#111113] text-zinc-100 shadow-2xl shadow-black/60">
+          <div className="border-b border-zinc-800 p-3">
+            <label className="mb-1.5 block text-[11px] font-medium uppercase text-zinc-500" htmlFor="model-search">
+              Models
             </label>
-            <select
-              id="provider-select"
-              value={selectedProviderId}
-              onChange={event => handleProviderChange(event.target.value)}
-              className="w-full rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-white/40">
-              {providers.map(provider => (
-                <option key={provider.id} value={provider.id} className="bg-black text-white">
-                  {provider.name}
-                </option>
-              ))}
-            </select>
+            <input
+              id="model-search"
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+              placeholder="Search configured models"
+              className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none transition-colors placeholder:text-zinc-600 focus:border-orange-300/60"
+            />
           </div>
 
           <div className="p-2">
             <div className="flex items-center justify-between px-2 pb-2 pt-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-white/45">Models</span>
-              <span className="max-w-[180px] truncate text-xs text-white/40">{providerLabel}</span>
+              <span className="text-[11px] font-medium uppercase text-zinc-500">Configured providers</span>
+              <span className="max-w-[180px] truncate text-xs text-zinc-500">{modelOptions.length} models</span>
             </div>
             <div className="max-h-64 overflow-y-auto pr-1">
-              {models.length === 0 ? (
-                <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-5 text-center text-sm text-white/55">
-                  Add model names for this provider in settings.
+              {filteredModels.length === 0 ? (
+                <div className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-5 text-center text-sm text-zinc-500">
+                  Configure a provider in settings first.
                 </div>
               ) : (
-                models.map(model => {
-                  const isSelected = selectedProviderId === selectedProvider?.id && model === selectedModel;
+                filteredModels.map(option => {
+                  const value = `${option.providerId}>${option.model}`;
+                  const isSelected = value === selectedValue;
                   return (
                     <button
-                      key={model}
+                      key={value}
                       type="button"
                       disabled={isSaving}
-                      onClick={() => saveModel(model)}
-                      className={`mb-1 flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
-                        isSelected ? 'bg-white text-black' : 'text-white/82 hover:bg-white/[0.08] hover:text-white'
+                      onClick={() => saveModel(option)}
+                      className={`mb-1 flex w-full cursor-pointer items-center justify-between rounded-md px-3 py-2.5 text-left text-sm transition-colors ${
+                        isSelected
+                          ? 'bg-orange-300 text-zinc-950'
+                          : 'text-zinc-300 hover:bg-zinc-950 hover:text-zinc-100'
                       } disabled:cursor-wait disabled:opacity-60`}>
-                      <span className="truncate">{model}</span>
+                      <span className="min-w-0">
+                        <span className="block truncate">{option.model}</span>
+                        <span className={`block truncate text-xs ${isSelected ? 'text-zinc-800' : 'text-zinc-500'}`}>
+                          {option.providerName}
+                        </span>
+                      </span>
                       {isSelected && <span className="ml-3 text-xs font-medium">Selected</span>}
                     </button>
                   );

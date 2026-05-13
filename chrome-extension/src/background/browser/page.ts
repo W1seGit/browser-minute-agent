@@ -58,6 +58,17 @@ export class CachedStateClickableElementsHashes {
   }
 }
 
+export type ExtractContentMode = 'visible_text' | 'readability' | 'links' | 'tables' | 'forms';
+
+export interface ExtractedPageContent {
+  mode: ExtractContentMode;
+  url: string;
+  title: string;
+  content: string;
+  itemCount?: number;
+  truncated: boolean;
+}
+
 export default class Page {
   private _tabId: number;
   private _browser: Browser | null = null;
@@ -375,6 +386,91 @@ export default class Page {
     return updatedState;
   }
 
+  async extractContent(mode: ExtractContentMode, maxChars = 8000): Promise<ExtractedPageContent> {
+    if (!this._puppeteerPage) {
+      throw new Error('Puppeteer page is not connected');
+    }
+
+    const result = await this._puppeteerPage.evaluate(extractMode => {
+      const clean = (value: string | null | undefined) => (value || '').replace(/\s+/g, ' ').trim();
+
+      if (extractMode === 'readability') {
+        const readability = window.parserReadability?.();
+        return {
+          content: clean(readability?.textContent || document.body?.innerText),
+          itemCount: readability ? 1 : 0,
+        };
+      }
+
+      if (extractMode === 'links') {
+        const links = Array.from(document.querySelectorAll('a[href]'))
+          .map(anchor => {
+            const link = anchor as HTMLAnchorElement;
+            return { text: clean(link.innerText || link.getAttribute('aria-label')), href: link.href };
+          })
+          .filter(link => link.href)
+          .slice(0, 200);
+
+        return {
+          content: links.map(link => `- ${link.text || '(no text)'}: ${link.href}`).join('\n'),
+          itemCount: links.length,
+        };
+      }
+
+      if (extractMode === 'tables') {
+        const tables = Array.from(document.querySelectorAll('table'))
+          .map((table, tableIndex) => {
+            const rows = Array.from(table.querySelectorAll('tr'))
+              .map(row =>
+                Array.from(row.querySelectorAll('th,td'))
+                  .map(cell => clean(cell.textContent))
+                  .filter(Boolean)
+                  .join(' | '),
+              )
+              .filter(Boolean)
+              .slice(0, 80);
+            return rows.length > 0 ? `Table ${tableIndex + 1}\n${rows.join('\n')}` : '';
+          })
+          .filter(Boolean);
+
+        return { content: tables.join('\n\n'), itemCount: tables.length };
+      }
+
+      if (extractMode === 'forms') {
+        const fields = Array.from(document.querySelectorAll('input, textarea, select, button'))
+          .map((element, index) => {
+            const input = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement;
+            const id = input.id ? document.querySelector(`label[for="${CSS.escape(input.id)}"]`)?.textContent : '';
+            const label =
+              clean(id) ||
+              clean(input.getAttribute('aria-label')) ||
+              clean(input.getAttribute('placeholder')) ||
+              clean(input.name) ||
+              clean(input.textContent);
+            const tag = input.tagName.toLowerCase();
+            const type = 'type' in input && input.type ? ` type=${input.type}` : '';
+            return `${index + 1}. <${tag}${type}> ${label || '(unlabeled)'}`;
+          })
+          .slice(0, 200);
+
+        return { content: fields.join('\n'), itemCount: fields.length };
+      }
+
+      return { content: clean(document.body?.innerText), itemCount: 1 };
+    }, mode);
+
+    const content = result.content || '';
+    const truncated = content.length > maxChars;
+    return {
+      mode,
+      url: this._puppeteerPage.url(),
+      title: await this._puppeteerPage.title(),
+      content: truncated ? content.slice(0, maxChars) : content,
+      itemCount: result.itemCount,
+      truncated,
+    };
+  }
+
   async _updateState(useVision = false, focusElement = -1): Promise<PageState> {
     try {
       // Test if page is still accessible
@@ -666,6 +762,60 @@ export default class Page {
     }
   }
 
+  async scroll(direction: 'top' | 'bottom' | 'up' | 'down', elementNode?: DOMElementNode): Promise<void> {
+    if (!this._puppeteerPage) {
+      throw new Error('Puppeteer is not connected');
+    }
+
+    if (elementNode) {
+      const element = await this.locateElement(elementNode);
+      if (!element) {
+        throw new Error(`Element: ${elementNode} not found`);
+      }
+
+      const scrollableElement = await this._findNearestScrollableElement(element);
+      if (!scrollableElement) {
+        throw new Error(`No scrollable ancestor found for element: ${elementNode}`);
+      }
+
+      await scrollableElement.evaluate((el, dir) => {
+        const amount = Math.max(1, Math.floor(el.clientHeight * 0.9));
+        if (dir === 'top') el.scrollTo({ top: 0, behavior: 'smooth' });
+        if (dir === 'bottom') el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+        if (dir === 'up') el.scrollBy({ top: -amount, behavior: 'smooth' });
+        if (dir === 'down') el.scrollBy({ top: amount, behavior: 'smooth' });
+      }, direction);
+      return;
+    }
+
+    await this._puppeteerPage.evaluate(dir => {
+      const canScroll = (el: Element | null): el is HTMLElement =>
+        el instanceof HTMLElement && el.scrollHeight > el.clientHeight + 1;
+      const active = document.activeElement;
+      const candidates = [
+        canScroll(active) ? active : null,
+        document.scrollingElement,
+        document.documentElement,
+        document.body,
+        ...Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], .main, .content, .container, div')),
+      ].filter((el): el is HTMLElement | Element => Boolean(el));
+
+      const target =
+        candidates.find(el => {
+          const maxScrollTop = el.scrollHeight - el.clientHeight;
+          return maxScrollTop > 1;
+        }) ??
+        document.scrollingElement ??
+        document.documentElement;
+
+      const amount = Math.max(1, Math.floor((window.visualViewport?.height || window.innerHeight) * 0.9));
+      if (dir === 'top') target.scrollTo({ top: 0, behavior: 'smooth' });
+      if (dir === 'bottom') target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' });
+      if (dir === 'up') target.scrollBy({ top: -amount, behavior: 'smooth' });
+      if (dir === 'down') target.scrollBy({ top: amount, behavior: 'smooth' });
+    }, direction);
+  }
+
   async scrollToPreviousPage(elementNode?: DOMElementNode): Promise<void> {
     if (!this._puppeteerPage) {
       throw new Error('Puppeteer is not connected');
@@ -755,6 +905,117 @@ export default class Page {
           logger.error('Failed to release modifier:', modifier, releaseError);
         }
       }
+    }
+  }
+
+  /**
+   * Type text into the currently focused element (document.activeElement).
+   * The caller must ensure the target is focused first (e.g. via click_element).
+   *
+   * Strategy:
+   * 1. Native <input>/<textarea> — splice text at cursor into .value directly.
+   * 2. contenteditable / editor divs — use document.execCommand('insertText').
+   * 3. Fallback — simulated keystrokes via keyboard.type().
+   */
+  async typeText(text: string, signal?: AbortSignal): Promise<void> {
+    if (!this._puppeteerPage) {
+      throw new Error('Puppeteer page is not connected');
+    }
+    try {
+      if (signal?.aborted) {
+        throw new Error('Input text aborted');
+      }
+
+      const shouldFastInsert = text.length > 80 || /[\r\n\t]/.test(text);
+      if (shouldFastInsert) {
+        const inserted = await this._puppeteerPage.evaluate((t: string) => {
+          const el = document.activeElement;
+          if (!el || !(el instanceof HTMLElement)) {
+            return false;
+          }
+
+          if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+            const start = el.selectionStart ?? el.value.length;
+            const end = el.selectionEnd ?? el.value.length;
+            el.value = el.value.slice(0, start) + t + el.value.slice(end);
+            el.selectionStart = el.selectionEnd = start + t.length;
+            el.dispatchEvent(new InputEvent('input', { bubbles: true, data: t, inputType: 'insertText' }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+          }
+
+          return document.execCommand('insertText', false, t);
+        }, text);
+
+        if (inserted) {
+          await this.waitForPageAndFramesLoad();
+          logger.info('typeText complete', text.slice(0, 50));
+          return;
+        }
+      }
+
+      const beforeInput = await this._puppeteerPage.evaluate(() => {
+        const el = document.activeElement;
+        if (!el || !(el instanceof HTMLElement)) {
+          return null;
+        }
+
+        // Native input / textarea — splice at cursor, dispatch events
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+          return {
+            kind: 'native',
+            value: el.value,
+            selectionStart: el.selectionStart,
+            selectionEnd: el.selectionEnd,
+          };
+        }
+
+        // contenteditable or rich editors — execCommand is instant and fires
+        // the Input events that Monaco, CodeMirror, Quill, etc. rely on.
+        return { kind: 'custom' };
+      });
+
+      for (let offset = 0; offset < text.length; offset += 64) {
+        if (signal?.aborted) {
+          throw new Error('Input text aborted');
+        }
+        await this._puppeteerPage.keyboard.type(text.slice(offset, offset + 64), { delay: 0 });
+      }
+
+      if (beforeInput?.kind === 'native') {
+        const typed = await this._puppeteerPage.evaluate((previousValue: string) => {
+          const el = document.activeElement;
+          return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+            ? el.value !== previousValue
+            : true;
+        }, beforeInput.value ?? '');
+
+        if (!typed) {
+          await this._puppeteerPage.evaluate(
+            (t: string, selectionStart: number | null | undefined, selectionEnd: number | null | undefined) => {
+              const el = document.activeElement;
+              if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+                return;
+              }
+              const start = selectionStart ?? el.value.length;
+              const end = selectionEnd ?? el.value.length;
+              el.value = el.value.slice(0, start) + t + el.value.slice(end);
+              el.selectionStart = el.selectionEnd = start + t.length;
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            },
+            text,
+            beforeInput.selectionStart,
+            beforeInput.selectionEnd,
+          );
+        }
+      }
+
+      await this.waitForPageAndFramesLoad();
+      logger.info('typeText complete', text.slice(0, 50));
+    } catch (error) {
+      logger.error('Failed to type text:', error);
+      throw new Error(`Failed to type text: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -1150,8 +1411,10 @@ export default class Page {
         return false;
       });
 
-      // Choose appropriate input method based on element properties
-      if ((isContentEditable || tagName === 'input') && !isReadOnly && !isDisabled) {
+      // Choose appropriate input method based on element properties.
+      // Code editors often expose a div wrapper that focuses a hidden textarea. If the
+      // target is not directly editable, focus it and type through the page keyboard.
+      if ((isContentEditable || tagName === 'input' || tagName === 'textarea') && !isReadOnly && !isDisabled) {
         // Clear content and set value directly
         await element.evaluate(el => {
           if (el instanceof HTMLElement) {
@@ -1165,20 +1428,35 @@ export default class Page {
           el.dispatchEvent(new Event('change', { bubbles: true }));
         });
 
-        // Type the text with a small delay between keypresses
-        await element.type(text, { delay: 50 });
-      } else {
+        await element.evaluate((el, value) => {
+          if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+            el.value = value;
+          } else if (el instanceof HTMLElement) {
+            el.textContent = value;
+          }
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }, text);
+      } else if (tagName === 'select') {
         // Use direct value setting for other types of elements
         await element.evaluate((el, value) => {
           if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
             el.value = value;
-          } else if (el instanceof HTMLElement && el.isContentEditable) {
-            el.textContent = value;
           }
           // Dispatch events
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
         }, text);
+      } else {
+        await element.click();
+        const inserted = await this._puppeteerPage.evaluate(value => {
+          const activeElement = document.activeElement;
+          if (!activeElement) return false;
+          return document.execCommand('insertText', false, value);
+        }, text);
+        if (!inserted) {
+          await this._puppeteerPage.keyboard.type(text, { delay: 0 });
+        }
       }
 
       // Wait for page stability after input

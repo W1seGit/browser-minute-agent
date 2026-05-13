@@ -1,6 +1,6 @@
 import { useState } from 'react';
+import type { ComponentType } from 'react';
 import '@src/Options.css';
-import { Button } from '@extension/ui';
 import { withErrorBoundary, withSuspense } from '@extension/shared';
 import { t } from '@extension/i18n';
 import { FiSettings, FiCpu, FiShield } from 'react-icons/fi';
@@ -10,9 +10,9 @@ import { FirewallSettings } from './components/FirewallSettings';
 
 type TabTypes = 'general' | 'models' | 'firewall';
 
-const TABS: { id: TabTypes; icon: React.ComponentType<{ className?: string }>; label: string }[] = [
+const TABS: { id: TabTypes; icon: ComponentType<{ className?: string }>; label: string }[] = [
   { id: 'general', icon: FiSettings, label: t('options_tabs_general') },
-  { id: 'models', icon: FiCpu, label: 'Providers' },
+  { id: 'models', icon: FiCpu, label: t('options_tabs_models') },
   { id: 'firewall', icon: FiShield, label: t('options_tabs_firewall') },
 ];
 
@@ -28,7 +28,7 @@ const Options = () => {
       case 'general':
         return <GeneralSettings isDarkMode={true} />;
       case 'models':
-        return <ModelSettings isDarkMode={true} />;
+        return <ModelSettings />;
       case 'firewall':
         return <FirewallSettings isDarkMode={true} />;
       default:
@@ -37,34 +37,36 @@ const Options = () => {
   };
 
   return (
-    <div className="flex min-h-screen min-w-[768px] bg-black text-white">
-      {/* Vertical Navigation Bar */}
-      <nav className="w-52 border-r border-white/10 bg-black">
-        <div className="p-4">
-          <h1 className="mb-6 text-xl font-semibold text-white">min-agent</h1>
-          <ul className="space-y-2">
-            {TABS.map(item => (
-              <li key={item.id}>
-                <Button
+    <div className="min-h-screen bg-black text-white">
+      <header className="sticky top-0 z-20 border-b border-slate-800 bg-black/95 backdrop-blur">
+        <div className="mx-auto flex max-w-[1600px] flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">Browser agent</p>
+              <h1 className="mt-1 text-xl font-semibold text-white">min-agent</h1>
+            </div>
+            <nav className="flex gap-2 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950 p-1">
+              {TABS.map(item => (
+                <button
+                  key={item.id}
+                  type="button"
                   onClick={() => handleTabClick(item.id)}
-                  className={`flex w-full items-center space-x-2 rounded-xl px-4 py-2.5 text-left text-sm transition-colors
-                    ${
-                      activeTab !== item.id
-                        ? 'bg-white/[0.04] text-white/65 hover:bg-white/[0.08] hover:text-white'
-                        : 'bg-white text-black'
-                    }`}>
-                  <item.icon className="h-4 w-4" />
+                  className={`flex min-h-10 cursor-pointer items-center gap-2 rounded-md px-4 text-sm font-medium transition ${
+                    activeTab === item.id
+                      ? 'bg-white text-slate-950'
+                      : 'text-slate-400 hover:bg-slate-900 hover:text-white'
+                  }`}>
+                  <item.icon className="size-4 shrink-0" />
                   <span>{item.label}</span>
-                </Button>
-              </li>
-            ))}
-          </ul>
+                </button>
+              ))}
+            </nav>
+          </div>
         </div>
-      </nav>
+      </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 bg-black p-8">
-        <div className="mx-auto min-w-[512px] max-w-screen-lg">{renderTabContent()}</div>
+      <main className="min-w-0 bg-black px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-[1600px]">{renderTabContent()}</div>
       </main>
     </div>
   );

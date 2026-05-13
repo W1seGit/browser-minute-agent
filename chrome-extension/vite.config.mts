@@ -67,6 +67,13 @@ export default defineConfig(({ mode }) => {
   define: {
     'import.meta.env.DEV': isDev,
     'import.meta.env.VITE_POSTHOG_API_KEY': JSON.stringify(env.VITE_POSTHOG_API_KEY || process.env.VITE_POSTHOG_API_KEY || ''),
+    'process.cwd': JSON.stringify('(() => "/")'),
+    'process.platform': JSON.stringify('browser'),
+    'process.versions': JSON.stringify({ bun: false, node: false }),
+    'process.env': JSON.stringify({}),
+    'process.title': JSON.stringify('browser-extension'),
+    'process.emitWarning': JSON.stringify('(() => {})'),
+    'global': 'globalThis',
   },
 
   envDir: '../',

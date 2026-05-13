@@ -8,19 +8,26 @@ import {
 } from '@extension/storage';
 import { t } from '@extension/i18n';
 import BrowserContext from './browser/context';
-import { Executor } from './agent/executor';
+import { PiExecutor } from './agent/pi/executor';
 import { createLogger } from './log';
 import { ExecutionState } from './agent/event/types';
-import { createChatModel } from './agent/helper';
 import { DEFAULT_AGENT_OPTIONS } from './agent/types';
 import { SpeechToTextService } from './services/speechToText';
 import { injectBuildDomTreeScripts } from './browser/dom/service';
+import type { AiSpaceTabAccessDecision, AiSpaceTabAccessRequest } from './browser/context';
 
 const logger = createLogger('background');
 
 const browserContext = new BrowserContext({});
-let currentExecutor: Executor | null = null;
+let currentExecutor: PiExecutor | null = null;
 let currentPort: chrome.runtime.Port | null = null;
+const pendingTabAccessRequests = new Map<
+  string,
+  {
+    resolve: (decision: AiSpaceTabAccessDecision) => void;
+    timeout: ReturnType<typeof setTimeout>;
+  }
+>();
 const SIDE_PANEL_URL = chrome.runtime.getURL('side-panel/index.html');
 
 // Setup side panel behavior
@@ -71,6 +78,7 @@ chrome.runtime.onConnect.addListener(port => {
     }
 
     currentPort = port;
+    browserContext.setTabAccessRequestHandler(requestAiSpaceTabAccess);
 
     port.onMessage.addListener(async message => {
       try {
@@ -80,11 +88,24 @@ chrome.runtime.onConnect.addListener(port => {
             port.postMessage({ type: 'heartbeat_ack' });
             break;
 
+          case 'ai_space_tab_access_response': {
+            const pending = pendingTabAccessRequests.get(message.requestId);
+            if (!pending) break;
+            clearTimeout(pending.timeout);
+            pendingTabAccessRequests.delete(message.requestId);
+            pending.resolve({
+              approved: Boolean(message.approved),
+              remember: message.remember,
+            });
+            break;
+          }
+
           case 'new_task': {
             if (!message.task) return port.postMessage({ type: 'error', error: t('bg_cmd_newTask_noTask') });
             if (!message.tabId) return port.postMessage({ type: 'error', error: t('bg_errors_noTabId') });
 
             logger.info('new_task', message.tabId, message.task);
+            await browserContext.ensureAiSpace(message.tabId);
             currentExecutor = await setupExecutor(message.taskId, message.task, browserContext);
             subscribeToExecutorEvents(currentExecutor);
 
@@ -98,6 +119,7 @@ chrome.runtime.onConnect.addListener(port => {
             if (!message.tabId) return port.postMessage({ type: 'error', error: t('bg_errors_noTabId') });
 
             logger.info('follow_up_task', message.tabId, message.task);
+            await browserContext.ensureAiSpace(message.tabId);
 
             // If executor exists, add follow-up task
             if (currentExecutor) {
@@ -211,6 +233,7 @@ chrome.runtime.onConnect.addListener(port => {
 
             try {
               // Switch to the specified tab
+              await browserContext.ensureAiSpace(message.tabId);
               await browserContext.switchTab(message.tabId);
               // Setup executor with the new taskId and a dummy task description
               currentExecutor = await setupExecutor(message.taskId, message.task, browserContext);
@@ -245,10 +268,46 @@ chrome.runtime.onConnect.addListener(port => {
       // this event is also triggered when the side panel is closed, so we need to cancel the task
       console.log('Side panel disconnected');
       currentPort = null;
+      browserContext.setTabAccessRequestHandler(null);
+      for (const [requestId, pending] of pendingTabAccessRequests) {
+        clearTimeout(pending.timeout);
+        pending.resolve({ approved: false });
+        pendingTabAccessRequests.delete(requestId);
+      }
       currentExecutor?.cancel();
     });
   }
 });
+
+async function requestAiSpaceTabAccess(request: AiSpaceTabAccessRequest): Promise<AiSpaceTabAccessDecision> {
+  const generalSettings = await generalSettingsStore.getSettings();
+  browserContext.updateTabAccessPolicy(generalSettings.aiSpaceTabAccess);
+
+  if (generalSettings.aiSpaceTabAccess === 'alwaysAllow') {
+    return { approved: true };
+  }
+  if (generalSettings.aiSpaceTabAccess === 'alwaysDeny') {
+    return { approved: false };
+  }
+  if (!currentPort) {
+    return { approved: false };
+  }
+
+  const requestId = crypto.randomUUID();
+  currentPort.postMessage({
+    type: 'ai_space_tab_access_request',
+    requestId,
+    request,
+  });
+
+  return new Promise(resolve => {
+    const timeout = setTimeout(() => {
+      pendingTabAccessRequests.delete(requestId);
+      resolve({ approved: false });
+    }, 60_000);
+    pendingTabAccessRequests.set(requestId, { resolve, timeout });
+  });
+}
 
 async function setupExecutor(taskId: string, task: string, browserContext: BrowserContext) {
   const providers = await llmProviderStore.getAllProviders();
@@ -273,7 +332,6 @@ async function setupExecutor(taskId: string, task: string, browserContext: Brows
     throw new Error('Select a model for min-agent before starting a task.');
   }
   const minAgentProviderConfig = providers[minAgentModel.provider];
-  const minAgentLLM = createChatModel(minAgentProviderConfig, minAgentModel);
 
   // Apply firewall settings to browser context
   const firewall = await firewallStore.getFirewall();
@@ -290,12 +348,13 @@ async function setupExecutor(taskId: string, task: string, browserContext: Brows
   }
 
   const generalSettings = await generalSettingsStore.getSettings();
+  browserContext.updateTabAccessPolicy(generalSettings.aiSpaceTabAccess);
   browserContext.updateConfig({
     minimumWaitPageLoadTime: generalSettings.minWaitPageLoad / 1000.0,
     displayHighlights: generalSettings.displayHighlights,
   });
 
-  const executor = new Executor(task, taskId, browserContext, minAgentLLM, {
+  const executor = new PiExecutor(task, taskId, browserContext, minAgentProviderConfig, minAgentModel, {
     agentOptions: {
       maxSteps: generalSettings.maxSteps,
       maxFailures: generalSettings.maxFailures,
@@ -309,7 +368,7 @@ async function setupExecutor(taskId: string, task: string, browserContext: Brows
 }
 
 // Update subscribeToExecutorEvents to use port
-async function subscribeToExecutorEvents(executor: Executor) {
+async function subscribeToExecutorEvents(executor: PiExecutor) {
   // Clear previous event listeners to prevent multiple subscriptions
   executor.clearExecutionEvents();
 
@@ -323,12 +382,9 @@ async function subscribeToExecutorEvents(executor: Executor) {
       logger.error('Failed to send message to side panel:', error);
     }
 
-    if (
-      event.state === ExecutionState.TASK_OK ||
-      event.state === ExecutionState.TASK_FAIL ||
-      event.state === ExecutionState.TASK_CANCEL
-    ) {
+    if (event.state === ExecutionState.TASK_FAIL || event.state === ExecutionState.TASK_CANCEL) {
       await currentExecutor?.cleanup();
+      currentExecutor = null;
     }
   });
 }

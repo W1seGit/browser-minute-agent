@@ -11,10 +11,29 @@ import { createLogger } from '@src/background/log';
 import { isUrlAllowed } from './util';
 
 const logger = createLogger('BrowserContext');
+const AI_SPACE_GROUP_TITLE = 'AI Space';
+const AI_SPACE_GROUP_COLOR = chrome.tabGroups.Color.BLUE;
+
+export interface AiSpaceTabAccessRequest {
+  tabId: number;
+  title: string;
+  url: string;
+  reason: string;
+}
+
+export interface AiSpaceTabAccessDecision {
+  approved: boolean;
+  remember?: 'alwaysAllow' | 'alwaysDeny';
+}
+
 export default class BrowserContext {
   private _config: BrowserContextConfig;
   private _currentTabId: number | null = null;
   private _attachedPages: Map<number, Page> = new Map();
+  private _aiSpaceGroupId: number | null = null;
+  private _tabAccessPolicy: 'ask' | 'alwaysAllow' | 'alwaysDeny' = 'ask';
+  private _tabAccessRequestHandler: ((request: AiSpaceTabAccessRequest) => Promise<AiSpaceTabAccessDecision>) | null =
+    null;
 
   constructor(config: Partial<BrowserContextConfig>) {
     this._config = { ...DEFAULT_BROWSER_CONTEXT_CONFIG, ...config };
@@ -31,6 +50,111 @@ export default class BrowserContext {
   public updateCurrentTabId(tabId: number): void {
     // only update tab id, but don't attach it.
     this._currentTabId = tabId;
+  }
+
+  public updateTabAccessPolicy(policy: 'ask' | 'alwaysAllow' | 'alwaysDeny'): void {
+    this._tabAccessPolicy = policy;
+  }
+
+  public setTabAccessRequestHandler(
+    handler: ((request: AiSpaceTabAccessRequest) => Promise<AiSpaceTabAccessDecision>) | null,
+  ): void {
+    this._tabAccessRequestHandler = handler;
+  }
+
+  public async ensureAiSpace(tabId: number): Promise<number> {
+    const tab = await chrome.tabs.get(tabId);
+    const groupId = await this.getOrCreateAiSpaceGroup(tab);
+    await this.addTabsToAiSpace([tabId], groupId);
+    this._currentTabId = tabId;
+    return groupId;
+  }
+
+  public async requestTabAccess(tabId: number, reason: string): Promise<boolean> {
+    const tab = await chrome.tabs.get(tabId);
+    if (this._aiSpaceGroupId !== null && tab.groupId === this._aiSpaceGroupId) {
+      return true;
+    }
+
+    if (this._tabAccessPolicy === 'alwaysAllow') {
+      await this.ensureAiSpace(tabId);
+      return true;
+    }
+
+    if (this._tabAccessPolicy === 'alwaysDeny') {
+      return false;
+    }
+
+    if (!this._tabAccessRequestHandler) {
+      return false;
+    }
+
+    const decision = await this._tabAccessRequestHandler({
+      tabId,
+      title: tab.title || 'Untitled tab',
+      url: tab.url || '',
+      reason,
+    });
+
+    if (decision.remember) {
+      this._tabAccessPolicy = decision.remember;
+    }
+
+    if (!decision.approved) {
+      return false;
+    }
+
+    await this.ensureAiSpace(tabId);
+    return true;
+  }
+
+  private async getOrCreateAiSpaceGroup(tab?: chrome.tabs.Tab): Promise<number> {
+    if (this._aiSpaceGroupId !== null) {
+      try {
+        await chrome.tabGroups.get(this._aiSpaceGroupId);
+        return this._aiSpaceGroupId;
+      } catch {
+        this._aiSpaceGroupId = null;
+      }
+    }
+
+    const groups = await chrome.tabGroups.query({ title: AI_SPACE_GROUP_TITLE });
+    const groupInWindow = tab?.windowId ? groups.find(group => group.windowId === tab.windowId) : groups[0];
+    if (groupInWindow) {
+      this._aiSpaceGroupId = groupInWindow.id;
+      await chrome.tabGroups.update(groupInWindow.id, { title: AI_SPACE_GROUP_TITLE, color: AI_SPACE_GROUP_COLOR });
+      return groupInWindow.id;
+    }
+
+    if (!tab?.id) {
+      throw new Error('Cannot create AI Space without a tab');
+    }
+
+    const groupId = await chrome.tabs.group({ tabIds: [tab.id] });
+    await chrome.tabGroups.update(groupId, { title: AI_SPACE_GROUP_TITLE, color: AI_SPACE_GROUP_COLOR });
+    this._aiSpaceGroupId = groupId;
+    return groupId;
+  }
+
+  public async addTabsToAiSpace(tabIds: number[], groupId = this._aiSpaceGroupId): Promise<number> {
+    if (tabIds.length === 0) {
+      throw new Error('No tab IDs provided for AI Space');
+    }
+    const targetGroupId = groupId ?? (await this.getOrCreateAiSpaceGroup(await chrome.tabs.get(tabIds[0])));
+    const groupedId = await chrome.tabs.group({ groupId: targetGroupId, tabIds });
+    await chrome.tabGroups.update(groupedId, { title: AI_SPACE_GROUP_TITLE, color: AI_SPACE_GROUP_COLOR });
+    this._aiSpaceGroupId = groupedId;
+    return groupedId;
+  }
+
+  private async assertTabInAiSpace(tabId: number): Promise<void> {
+    if (this._aiSpaceGroupId === null) {
+      throw new Error('AI Space has not been initialized for this task');
+    }
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.groupId !== this._aiSpaceGroupId) {
+      throw new Error(`Tab ${tabId} is outside AI Space`);
+    }
   }
 
   private async _getOrCreatePage(tab: chrome.tabs.Tab, forceUpdate = false): Promise<Page> {
@@ -93,16 +217,32 @@ export default class BrowserContext {
     // 1. If _currentTabId not set, query the active tab and attach it
     if (!this._currentTabId) {
       let activeTab: chrome.tabs.Tab;
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const [tab] =
+        this._aiSpaceGroupId === null
+          ? await chrome.tabs.query({ active: true, currentWindow: true })
+          : await chrome.tabs.query({ active: true, currentWindow: true, groupId: this._aiSpaceGroupId });
+      const [fallbackAiTab] =
+        this._aiSpaceGroupId === null
+          ? []
+          : await chrome.tabs.query({ currentWindow: true, groupId: this._aiSpaceGroupId });
       if (!tab?.id) {
-        // open a new tab with blank page
-        const newTab = await chrome.tabs.create({ url: this._config.homePageUrl });
-        if (!newTab.id) {
-          // this should rarely happen
-          throw new Error('No tab ID available');
+        if (fallbackAiTab?.id) {
+          activeTab = fallbackAiTab;
+          await chrome.tabs.update(fallbackAiTab.id, { active: true });
+        } else {
+          // open a new tab with blank page
+          const newTab = await chrome.tabs.create({ url: this._config.homePageUrl });
+          if (!newTab.id) {
+            // this should rarely happen
+            throw new Error('No tab ID available');
+          }
+          await this.ensureAiSpace(newTab.id);
+          activeTab = newTab;
         }
-        activeTab = newTab;
       } else {
+        if (this._aiSpaceGroupId === null) {
+          await this.ensureAiSpace(tab.id);
+        }
         activeTab = tab;
       }
       logger.info('active tab', activeTab.id, activeTab.url, activeTab.title);
@@ -219,6 +359,10 @@ export default class BrowserContext {
 
   public async switchTab(tabId: number): Promise<Page> {
     logger.info('switchTab', tabId);
+    const approved = await this.requestTabAccess(tabId, 'The agent wants to switch to this tab.');
+    if (!approved) {
+      throw new Error('User denied access to tab outside AI Space');
+    }
 
     await chrome.tabs.update(tabId, { active: true });
     await this.waitForTabEvents(tabId, { waitForUpdate: false });
@@ -246,6 +390,7 @@ export default class BrowserContext {
     }
     //  Use chrome.tabs.update only if the page is not attached
     const tabId = page.tabId;
+    await this.assertTabInAiSpace(tabId);
     // Update tab and wait for events
     await chrome.tabs.update(tabId, { url, active: true });
     await this.waitForTabEvents(tabId);
@@ -266,6 +411,7 @@ export default class BrowserContext {
     if (!tab.id) {
       throw new Error('No tab ID available');
     }
+    await this.addTabsToAiSpace([tab.id]);
     // Wait for tab events
     await this.waitForTabEvents(tab.id);
 
@@ -280,6 +426,7 @@ export default class BrowserContext {
   }
 
   public async closeTab(tabId: number): Promise<void> {
+    await this.assertTabInAiSpace(tabId);
     await this.detachPage(tabId);
     await chrome.tabs.remove(tabId);
     // update current tab id if needed
@@ -301,7 +448,7 @@ export default class BrowserContext {
   }
 
   public async getTabInfos(): Promise<TabInfo[]> {
-    const tabs = await chrome.tabs.query({});
+    const tabs = this._aiSpaceGroupId === null ? [] : await chrome.tabs.query({ groupId: this._aiSpaceGroupId });
     const tabInfos: TabInfo[] = [];
 
     for (const tab of tabs) {

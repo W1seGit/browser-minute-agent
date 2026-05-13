@@ -262,6 +262,46 @@
   "options_general_replayHistoricalTasks_desc": {
     "message": "啟用儲存與重播代理程式的步驟歷史紀錄 (此為實驗性功能，可能存在問題)"
   },
+  "options_general_aiSpaceTabAccess": {
+    "message": "AI Space tab access"
+  },
+  "options_general_aiSpaceTabAccess_desc": {
+    "message": "Choose what happens when the agent tries to use a tab outside AI Space."
+  },
+  "options_general_aiSpaceTabAccess_ask": {
+    "message": "Ask every time"
+  },
+  "options_general_aiSpaceTabAccess_alwaysAllow": {
+    "message": "Always approve"
+  },
+  "options_general_aiSpaceTabAccess_alwaysDeny": {
+    "message": "Always deny"
+  },
+  "aiSpace_access_title": {
+    "message": "Allow tab access?"
+  },
+  "aiSpace_access_description": {
+    "message": "The agent wants to use a tab outside AI Space. Approving will move it into AI Space."
+  },
+  "aiSpace_access_decision": {
+    "message": "Decision"
+  },
+  "aiSpace_access_once": {
+    "message": "Only this time"
+  },
+  "aiSpace_access_alwaysAllow": {
+    "message": "Always approve"
+  },
+  "aiSpace_access_alwaysDeny": {
+    "message": "Always deny"
+  },
+  "aiSpace_access_deny": {
+    "message": "Deny"
+  },
+  "aiSpace_access_approve": {
+    "message": "Approve"
+  },
+
   "options_models_providers_header": {
     "message": "LLM 提供者"
   },

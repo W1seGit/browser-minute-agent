@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { FiSettings } from 'react-icons/fi';
+import { FiArrowDown, FiArrowLeft, FiCheck, FiClock, FiCopy, FiSettings } from 'react-icons/fi';
 import { PiPlusBold } from 'react-icons/pi';
 import { GrHistory } from 'react-icons/gr';
 import {
@@ -28,6 +28,205 @@ declare global {
   }
 }
 
+const TOOL_MESSAGE_PREFIX = '__bma_tool_call__:';
+const REASONING_MESSAGE_PREFIX = '__bma_reasoning__:';
+
+function MinuteAgentLogo() {
+  return (
+    <svg viewBox="0 0 32 32" className="size-8" role="img" aria-label="Minute Agent logo">
+      <rect width="32" height="32" rx="8" fill="#09090b" />
+      <rect x="1" y="1" width="30" height="30" rx="7" fill="#111113" stroke="#3f3f46" strokeWidth="1.5" />
+      <path d="M16 7.5a8.5 8.5 0 1 0 8.5 8.5" fill="none" stroke="#fdba74" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M16 16V10.8" stroke="#f4f4f5" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M16 16l4 2.6" stroke="#34d399" strokeWidth="2.2" strokeLinecap="round" />
+      <circle cx="16" cy="16" r="2" fill="#fdba74" />
+    </svg>
+  );
+}
+
+type ParsedToolDetails = {
+  id?: string;
+  name: string;
+  input?: unknown;
+  output?: unknown;
+  errorText?: string;
+};
+
+type AiSpaceTabAccessRequest = {
+  tabId: number;
+  title: string;
+  url: string;
+  reason: string;
+};
+
+type PendingAiSpaceRequest = {
+  requestId: string;
+  request: AiSpaceTabAccessRequest;
+};
+
+function parseToolMessageContent(content: string) {
+  if (!content.startsWith(TOOL_MESSAGE_PREFIX)) return null;
+  try {
+    return JSON.parse(content.slice(TOOL_MESSAGE_PREFIX.length)) as {
+      id?: string;
+      name: string;
+      state: string;
+      input?: unknown;
+      output?: unknown;
+      errorText?: string;
+      rawText?: string;
+    };
+  } catch {
+    return null;
+  }
+}
+
+function createToolMessageContent(
+  state: ExecutionState.ACT_START | ExecutionState.ACT_OK | ExecutionState.ACT_FAIL,
+  details = '',
+) {
+  if (isDoneAction(details)) return null;
+
+  const toolState =
+    state === ExecutionState.ACT_START
+      ? 'input-streaming'
+      : state === ExecutionState.ACT_FAIL
+        ? 'output-error'
+        : 'output-available';
+  const parsed = parseToolDetails(details);
+  if (!parsed) return null;
+
+  return `${TOOL_MESSAGE_PREFIX}${JSON.stringify({
+    name: parsed.name,
+    id: parsed.id,
+    state: toolState,
+    input: parsed.input,
+    output: toolState === 'output-available' ? parsed.output : undefined,
+    errorText: toolState === 'output-error' ? parsed.errorText : undefined,
+    rawText: details,
+  })}`;
+}
+
+function createReasoningMessageContent(text: string) {
+  return `${REASONING_MESSAGE_PREFIX}${JSON.stringify({ text })}`;
+}
+
+function isDoneAction(details: string) {
+  const trimmed = details.trim().toLowerCase();
+  return (
+    trimmed === 'done' ||
+    trimmed === 'done completed' ||
+    trimmed === 'done failed' ||
+    trimmed.startsWith('done:') ||
+    trimmed.startsWith('done ')
+  );
+}
+
+function parseToolDetails(details: string): ParsedToolDetails | null {
+  const match = details.match(/^([a-zA-Z_][\w-]*):\s*([\s\S]+)$/);
+  if (match) {
+    const [, name, rawPayload] = match;
+    try {
+      return {
+        name,
+        ...normalizeToolPayload(JSON.parse(rawPayload)),
+      };
+    } catch {
+      return {
+        name,
+        input: { details: rawPayload.trim() },
+        output: undefined,
+        errorText: undefined,
+      };
+    }
+  }
+
+  const completed = details.match(/^([a-zA-Z_][\w-]*) completed$/);
+  if (completed) {
+    return {
+      name: completed[1],
+      input: undefined,
+      output: { status: details },
+      errorText: undefined,
+    };
+  }
+
+  const failed = details.match(/^([a-zA-Z_][\w-]*) failed$/);
+  if (failed) {
+    return {
+      name: failed[1],
+      input: undefined,
+      output: undefined,
+      errorText: details,
+    };
+  }
+
+  return null;
+}
+
+function normalizeToolPayload(payload: unknown) {
+  if (!payload || typeof payload !== 'object') {
+    return {
+      input: payload,
+      output: undefined,
+      errorText: undefined,
+    };
+  }
+
+  const record = payload as Record<string, unknown>;
+  const legacyInput =
+    record.input === undefined && record.result === undefined && record.error === undefined
+      ? Object.fromEntries(Object.entries(record).filter(([key]) => key !== 'toolCallId'))
+      : undefined;
+
+  return {
+    id: typeof record.toolCallId === 'string' ? record.toolCallId : undefined,
+    input:
+      record.input && typeof record.input === 'object'
+        ? (record.input as Record<string, unknown>)
+        : legacyInput && Object.keys(legacyInput).length > 0
+          ? legacyInput
+          : undefined,
+    output: record.result !== undefined ? { result: record.result } : undefined,
+    errorText: typeof record.error === 'string' ? record.error : undefined,
+  };
+}
+
+function formatMessageForClipboard(message: Message) {
+  const tool = parseToolMessageContent(message.content);
+  if (tool) {
+    const lines = [`[tool:${tool.name}] ${tool.state}`];
+    if (tool.input !== undefined) lines.push(`input: ${JSON.stringify(tool.input)}`);
+    if (tool.output !== undefined) lines.push(`output: ${JSON.stringify(tool.output)}`);
+    if (tool.errorText) lines.push(`error: ${tool.errorText}`);
+    return lines.join('\n');
+  }
+
+  if (message.content.startsWith(REASONING_MESSAGE_PREFIX)) {
+    try {
+      const parsed = JSON.parse(message.content.slice(REASONING_MESSAGE_PREFIX.length)) as { text?: string };
+      return `[thinking]\n${parsed.text ?? ''}`;
+    } catch {
+      return '[thinking]';
+    }
+  }
+
+  return message.content;
+}
+
+function formatChatHistoryForClipboard(messages: Message[]) {
+  return messages
+    .map(message => {
+      const time = new Date(message.timestamp).toLocaleString();
+      return `## ${message.actor} - ${time}\n${formatMessageForClipboard(message)}`;
+    })
+    .join('\n\n');
+}
+
+function getTabDisplayName(tab: chrome.tabs.Tab) {
+  return tab.title || tab.url || 'Current tab';
+}
+
 const SidePanel = () => {
   const progressMessage = 'Showing progress...';
   const [messages, setMessages] = useState<Message[]>([]);
@@ -41,17 +240,24 @@ const SidePanel = () => {
   const [hasProviders, setHasProviders] = useState<boolean | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessingSpeech, setIsProcessingSpeech] = useState(false);
-  const [isReplaying, setIsReplaying] = useState(false);
   const [replayEnabled, setReplayEnabled] = useState(false);
+  const [autoFollowMessages, setAutoFollowMessages] = useState(true);
+  const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
+  const [currentTabTitle, setCurrentTabTitle] = useState('');
+  const [pendingAiSpaceRequest, setPendingAiSpaceRequest] = useState<PendingAiSpaceRequest | null>(null);
+  const [aiSpaceDecisionMode, setAiSpaceDecisionMode] = useState<'once' | 'alwaysAllow' | 'alwaysDeny'>('once');
   const sessionIdRef = useRef<string | null>(null);
-  const isReplayingRef = useRef<boolean>(false);
   const portRef = useRef<chrome.runtime.Port | null>(null);
   const heartbeatIntervalRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const setInputTextRef = useRef<((text: string) => void) | null>(null);
+  const streamingMessageRef = useRef<string>('');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<number | null>(null);
+  const persistMessagesQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const workingTabIdRef = useRef<number | null>(null);
 
   // Check if providers are configured. The model itself is selected from the side panel.
   const checkModelConfiguration = useCallback(async () => {
@@ -80,6 +286,22 @@ const SidePanel = () => {
     checkModelConfiguration();
     loadGeneralSettings();
   }, [checkModelConfiguration, loadGeneralSettings]);
+
+  useEffect(() => {
+    const onUpdated = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => {
+      if (
+        tabId === workingTabIdRef.current &&
+        (changeInfo.title || changeInfo.url || changeInfo.status === 'complete')
+      ) {
+        setCurrentTabTitle(getTabDisplayName(tab));
+      }
+    };
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    return () => {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+    };
+  }, []);
 
   // Re-check model configuration when the side panel becomes visible again
   useEffect(() => {
@@ -110,30 +332,183 @@ const SidePanel = () => {
     sessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
 
-  useEffect(() => {
-    isReplayingRef.current = isReplaying;
-  }, [isReplaying]);
+  const persistMessagesSnapshot = useCallback((sessionId: string | null | undefined, nextMessages: Message[]) => {
+    if (!sessionId) return;
 
-  const appendMessage = useCallback((newMessage: Message, sessionId?: string | null) => {
-    // Don't save progress messages
-    const isProgressMessage = newMessage.content === progressMessage;
+    const messagesToPersist = nextMessages.filter(message => message.content !== progressMessage);
+    persistMessagesQueueRef.current = persistMessagesQueueRef.current
+      .catch(() => undefined)
+      .then(() => chatHistoryStore.replaceMessages(sessionId, messagesToPersist))
+      .catch(err => console.error('Failed to save messages to history:', err));
+  }, []);
+
+  const appendMessage = useCallback(
+    (newMessage: Message, sessionId?: string | null) => {
+      // Don't save progress messages
+      const newToolMessage = parseToolMessageContent(newMessage.content);
+      const effectiveSessionId = sessionId !== undefined ? sessionId : sessionIdRef.current;
+
+      setMessages(prev => {
+        const filteredMessages = prev.filter(
+          (msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1),
+        );
+        let nextMessages: Message[];
+
+        if (newToolMessage) {
+          let replaceIndex = -1;
+          for (let index = filteredMessages.length - 1; index >= 0; index -= 1) {
+            const existingToolMessage = parseToolMessageContent(filteredMessages[index].content);
+            const sameToolCall =
+              newToolMessage.id && existingToolMessage?.id
+                ? existingToolMessage.id === newToolMessage.id
+                : existingToolMessage?.name === newToolMessage.name && existingToolMessage.state === 'input-streaming';
+            if (sameToolCall) {
+              replaceIndex = index;
+              break;
+            }
+          }
+
+          if (replaceIndex >= 0) {
+            const existingToolMessage = parseToolMessageContent(filteredMessages[replaceIndex].content);
+            const mergedMessage =
+              existingToolMessage && newToolMessage
+                ? {
+                    ...newMessage,
+                    content: `${TOOL_MESSAGE_PREFIX}${JSON.stringify({
+                      ...newToolMessage,
+                      input: newToolMessage.input ?? existingToolMessage.input,
+                    })}`,
+                  }
+                : newMessage;
+            nextMessages = [
+              ...filteredMessages.slice(0, replaceIndex),
+              mergedMessage,
+              ...filteredMessages.slice(replaceIndex + 1),
+            ];
+            persistMessagesSnapshot(effectiveSessionId, nextMessages);
+            return nextMessages;
+          }
+        }
+        nextMessages = [...filteredMessages, newMessage];
+        persistMessagesSnapshot(effectiveSessionId, nextMessages);
+        return nextMessages;
+      });
+
+      console.log('sessionId', effectiveSessionId);
+    },
+    [persistMessagesSnapshot],
+  );
+
+  const appendReasoningDelta = useCallback(
+    (actor: Actors, delta: string, timestamp: number) => {
+      if (!delta) return;
+
+      setMessages(prev => {
+        const filteredMessages = prev.filter(
+          (msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1),
+        );
+        const lastMessage = filteredMessages[filteredMessages.length - 1];
+        let nextMessages: Message[];
+
+        if (lastMessage?.actor === actor && lastMessage.content.startsWith(REASONING_MESSAGE_PREFIX)) {
+          try {
+            const parsed = JSON.parse(lastMessage.content.slice(REASONING_MESSAGE_PREFIX.length)) as { text?: string };
+            nextMessages = [
+              ...filteredMessages.slice(0, -1),
+              {
+                ...lastMessage,
+                content: createReasoningMessageContent(`${parsed.text ?? ''}${delta}`),
+                timestamp,
+              },
+            ];
+            persistMessagesSnapshot(sessionIdRef.current, nextMessages);
+            return nextMessages;
+          } catch {
+            return filteredMessages;
+          }
+        }
+
+        nextMessages = [
+          ...filteredMessages,
+          {
+            actor,
+            content: createReasoningMessageContent(delta),
+            timestamp,
+          },
+        ];
+        persistMessagesSnapshot(sessionIdRef.current, nextMessages);
+        return nextMessages;
+      });
+    },
+    [persistMessagesSnapshot],
+  );
+
+  const appendStreamDelta = useCallback(
+    (actor: Actors, delta: string, timestamp: number) => {
+      if (!delta) return;
+
+      setMessages(prev => {
+        const filteredMessages = prev.filter(
+          (msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1),
+        );
+        const lastMessage = filteredMessages[filteredMessages.length - 1];
+        const previousContent =
+          lastMessage?.actor === actor && lastMessage.content === streamingMessageRef.current
+            ? streamingMessageRef.current
+            : '';
+        const content = previousContent + delta;
+        let nextMessages: Message[];
+        streamingMessageRef.current = content;
+
+        if (lastMessage?.actor === actor && lastMessage.content === previousContent) {
+          nextMessages = [
+            ...filteredMessages.slice(0, -1),
+            {
+              ...lastMessage,
+              content,
+              timestamp,
+            },
+          ];
+          persistMessagesSnapshot(sessionIdRef.current, nextMessages);
+          return nextMessages;
+        }
+
+        nextMessages = [
+          ...filteredMessages,
+          {
+            actor,
+            content,
+            timestamp,
+          },
+        ];
+        persistMessagesSnapshot(sessionIdRef.current, nextMessages);
+        return nextMessages;
+      });
+    },
+    [persistMessagesSnapshot],
+  );
+
+  const finalizeStreamingMessage = useCallback((actor: Actors) => {
+    const streamedContent = streamingMessageRef.current;
+    streamingMessageRef.current = '';
+
+    if (!streamedContent) return false;
 
     setMessages(prev => {
-      const filteredMessages = prev.filter((msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1));
-      return [...filteredMessages, newMessage];
+      const lastMessage = prev[prev.length - 1];
+      if (lastMessage?.actor === actor && lastMessage.content === streamedContent) {
+        return prev;
+      }
+      return prev;
     });
 
-    // Use provided sessionId if available, otherwise fall back to sessionIdRef.current
-    const effectiveSessionId = sessionId !== undefined ? sessionId : sessionIdRef.current;
+    return true;
+  }, []);
 
-    console.log('sessionId', effectiveSessionId);
-
-    // Save message to storage if we have a session and it's not a progress message
-    if (effectiveSessionId && !isProgressMessage) {
-      chatHistoryStore
-        .addMessage(effectiveSessionId, newMessage)
-        .catch(err => console.error('Failed to save message to history:', err));
-    }
+  const setWorkingTab = useCallback(async (tabId: number) => {
+    const tab = await chrome.tabs.get(tabId);
+    workingTabIdRef.current = tabId;
+    setCurrentTabTitle(getTabDisplayName(tab));
   }, []);
 
   const handleTaskState = useCallback(
@@ -149,27 +524,26 @@ const SidePanel = () => {
             case ExecutionState.TASK_START:
               // Reset historical session flag when a new task starts
               setIsHistoricalSession(false);
+              streamingMessageRef.current = '';
               break;
             case ExecutionState.TASK_OK:
               setIsFollowUpMode(true);
               setInputEnabled(true);
               setShowStopButton(false);
-              setIsReplaying(false);
+              if (finalizeStreamingMessage(actor)) return;
               skip = !content;
               break;
             case ExecutionState.TASK_FAIL:
               setIsFollowUpMode(true);
               setInputEnabled(true);
               setShowStopButton(false);
-              setIsReplaying(false);
-              skip = false;
+              skip = !content;
               break;
             case ExecutionState.TASK_CANCEL:
               setIsFollowUpMode(false);
               setInputEnabled(true);
               setShowStopButton(false);
-              setIsReplaying(false);
-              skip = false;
+              skip = !content;
               break;
             case ExecutionState.TASK_PAUSE:
               break;
@@ -184,6 +558,29 @@ const SidePanel = () => {
           break;
         case Actors.NAVIGATOR:
           switch (state) {
+            case ExecutionState.TASK_START:
+              setIsHistoricalSession(false);
+              streamingMessageRef.current = '';
+              break;
+            case ExecutionState.TASK_OK:
+              setIsFollowUpMode(true);
+              setInputEnabled(true);
+              setShowStopButton(false);
+              if (finalizeStreamingMessage(actor)) return;
+              skip = !content;
+              break;
+            case ExecutionState.TASK_FAIL:
+              setIsFollowUpMode(true);
+              setInputEnabled(true);
+              setShowStopButton(false);
+              skip = !content;
+              break;
+            case ExecutionState.TASK_CANCEL:
+              setIsFollowUpMode(false);
+              setInputEnabled(true);
+              setShowStopButton(false);
+              skip = !content;
+              break;
             case ExecutionState.STEP_START:
               displayProgress = true;
               break;
@@ -199,16 +596,57 @@ const SidePanel = () => {
               break;
             case ExecutionState.ACT_START:
               if (content !== 'cache_content' && content !== 'done') {
-                // skip to display caching content
-                skip = false;
+                const parsed = parseToolDetails(content);
+                const tabId =
+                  parsed?.name === 'switch_tab' &&
+                  parsed.input &&
+                  typeof parsed.input === 'object' &&
+                  typeof (parsed.input as { tab_id?: unknown }).tab_id === 'number'
+                    ? (parsed.input as { tab_id: number }).tab_id
+                    : null;
+                if (tabId !== null) {
+                  void setWorkingTab(tabId);
+                }
+                const toolMessage = createToolMessageContent(state, content);
+                if (toolMessage) {
+                  appendMessage({
+                    actor,
+                    content: toolMessage,
+                    timestamp,
+                  });
+                }
               }
-              break;
+              return;
             case ExecutionState.ACT_OK:
-              skip = !isReplayingRef.current;
-              break;
+              if (content && content !== 'done') {
+                const toolMessage = createToolMessageContent(state, content);
+                if (toolMessage) {
+                  appendMessage({
+                    actor,
+                    content: toolMessage,
+                    timestamp,
+                  });
+                }
+              }
+              return;
             case ExecutionState.ACT_FAIL:
-              skip = false;
-              break;
+              {
+                const toolMessage = createToolMessageContent(state, content);
+                if (toolMessage) {
+                  appendMessage({
+                    actor,
+                    content: toolMessage,
+                    timestamp,
+                  });
+                }
+              }
+              return;
+            case ExecutionState.STREAM_THINKING:
+              appendReasoningDelta(actor, content, timestamp);
+              return;
+            case ExecutionState.STREAM_TEXT:
+              appendStreamDelta(actor, content, timestamp);
+              return;
             default:
               console.error('Invalid action', state);
               return;
@@ -252,7 +690,7 @@ const SidePanel = () => {
         });
       }
     },
-    [appendMessage],
+    [appendMessage, appendReasoningDelta, appendStreamDelta, finalizeStreamingMessage, setWorkingTab],
   );
 
   // Stop heartbeat and close connection
@@ -307,6 +745,12 @@ const SidePanel = () => {
           setIsProcessingSpeech(false);
         } else if (message && message.type === 'heartbeat_ack') {
           console.log('Heartbeat acknowledged');
+        } else if (message && message.type === 'ai_space_tab_access_request') {
+          setPendingAiSpaceRequest({
+            requestId: message.requestId,
+            request: message.request,
+          });
+          setAiSpaceDecisionMode('once');
         }
       });
 
@@ -399,6 +843,7 @@ const SidePanel = () => {
       if (!tabId) {
         throw new Error('No active tab found');
       }
+      await setWorkingTab(tabId);
 
       // Clear messages if we're in a historical session
       if (isHistoricalSession) {
@@ -450,7 +895,6 @@ const SidePanel = () => {
         content: t('chat_replay_starting', historyData.task),
         timestamp: Date.now(),
       });
-      setIsReplaying(true);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       appendMessage({
@@ -558,6 +1002,7 @@ const SidePanel = () => {
       if (!tabId) {
         throw new Error('No active tab found');
       }
+      await setWorkingTab(tabId);
 
       setInputEnabled(false);
       setShowStopButton(true);
@@ -648,6 +1093,8 @@ const SidePanel = () => {
     setMessages([]);
     setCurrentSessionId(null);
     sessionIdRef.current = null;
+    workingTabIdRef.current = null;
+    setCurrentTabTitle('');
     setInputEnabled(true);
     setShowStopButton(false);
     setIsFollowUpMode(false);
@@ -655,6 +1102,41 @@ const SidePanel = () => {
 
     // Disconnect any existing connection
     stopConnection();
+  };
+
+  const handleCopyChatHistory = async () => {
+    if (messages.length === 0) return;
+
+    try {
+      await navigator.clipboard.writeText(formatChatHistoryForClipboard(messages));
+      setCopyState('copied');
+      window.setTimeout(() => setCopyState('idle'), 1600);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      appendMessage({
+        actor: Actors.SYSTEM,
+        content: `Failed to copy chat history: ${errorMessage}`,
+        timestamp: Date.now(),
+      });
+    }
+  };
+
+  const respondToAiSpaceRequest = async (approved: boolean) => {
+    if (!pendingAiSpaceRequest) return;
+
+    const remember = aiSpaceDecisionMode === 'once' ? undefined : aiSpaceDecisionMode;
+    if (remember) {
+      await generalSettingsStore.updateSettings({ aiSpaceTabAccess: remember });
+    }
+
+    portRef.current?.postMessage({
+      type: 'ai_space_tab_access_response',
+      requestId: pendingAiSpaceRequest.requestId,
+      approved: aiSpaceDecisionMode === 'alwaysDeny' ? false : approved,
+      remember,
+    });
+    setPendingAiSpaceRequest(null);
+    setAiSpaceDecisionMode('once');
   };
 
   const loadChatSessions = useCallback(async () => {
@@ -678,17 +1160,31 @@ const SidePanel = () => {
       setMessages([]);
       setIsFollowUpMode(false);
       setIsHistoricalSession(false);
+      workingTabIdRef.current = null;
+      setCurrentTabTitle('');
     }
   };
 
   const handleSessionSelect = async (sessionId: string) => {
     try {
+      if (portRef.current || showStopButton) {
+        try {
+          portRef.current?.postMessage({ type: 'cancel_task' });
+        } catch (error) {
+          console.warn('Failed to cancel live task before loading history:', error);
+        }
+        stopConnection();
+        setInputEnabled(true);
+        setShowStopButton(false);
+      }
       const fullSession = await chatHistoryStore.getSession(sessionId);
       if (fullSession && fullSession.messages.length > 0) {
         setCurrentSessionId(fullSession.id);
         setMessages(fullSession.messages);
         setIsFollowUpMode(false);
         setIsHistoricalSession(true); // Mark this as a historical session
+        workingTabIdRef.current = null;
+        setCurrentTabTitle('');
         console.log('history session selected', sessionId);
       }
       setShowHistory(false);
@@ -737,46 +1233,6 @@ const SidePanel = () => {
     }
   };
 
-  const handleBookmarkSelect = (content: string) => {
-    if (setInputTextRef.current) {
-      setInputTextRef.current(content);
-    }
-  };
-
-  const handleBookmarkUpdateTitle = async (id: number, title: string) => {
-    try {
-      await favoritesStorage.updatePromptTitle(id, title);
-
-      // Update favorites in the UI
-      await favoritesStorage.getAllPrompts();
-    } catch (error) {
-      console.error('Failed to update favorite prompt title:', error);
-    }
-  };
-
-  const handleBookmarkDelete = async (id: number) => {
-    try {
-      await favoritesStorage.removePrompt(id);
-
-      // Update favorites in the UI
-      await favoritesStorage.getAllPrompts();
-    } catch (error) {
-      console.error('Failed to delete favorite prompt:', error);
-    }
-  };
-
-  const handleBookmarkReorder = async (draggedId: number, targetId: number) => {
-    try {
-      // Directly pass IDs to storage function - it now handles the reordering logic
-      await favoritesStorage.reorderPrompts(draggedId, targetId);
-
-      // Fetch the updated list from storage to get the new IDs and reflect the authoritative order
-      await favoritesStorage.getAllPrompts();
-    } catch (error) {
-      console.error('Failed to reorder favorite prompts:', error);
-    }
-  };
-
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -793,11 +1249,23 @@ const SidePanel = () => {
     };
   }, [stopConnection]);
 
-  // Scroll to bottom when new messages arrive
-  // biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
+  const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    messagesEndRef.current?.scrollIntoView({ behavior });
+  }, []);
+
+  const handleMessagesScroll = useCallback(() => {
+    const element = messagesScrollRef.current;
+    if (!element) return;
+
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    setAutoFollowMessages(distanceFromBottom < 96);
+  }, []);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (autoFollowMessages) {
+      scrollMessagesToBottom('smooth');
+    }
+  }, [autoFollowMessages, messages, scrollMessagesToBottom]);
 
   const handleMicClick = async () => {
     if (isRecording) {
@@ -964,25 +1432,48 @@ const SidePanel = () => {
   };
 
   return (
-    <div className="bg-black text-white">
-      <div className="flex h-screen flex-col overflow-hidden bg-black text-white">
+    <div className="bg-bma-bg text-bma-text">
+      <div className="side-panel-shell flex h-screen flex-col overflow-hidden bg-bma-bg text-bma-text">
         <header className="header relative">
-          <div className="header-logo min-w-0 flex-1 gap-2">
+          <div className="header-logo min-w-0 flex-1 gap-3">
             {showHistory ? (
               <button
                 type="button"
                 onClick={() => handleBackToChat(false)}
-                className="cursor-pointer text-sm text-white/75 hover:text-white"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-100"
                 aria-label={t('nav_back_a11y')}>
-                {t('nav_back')}
+                <FiArrowLeft className="size-4" />
+                {t('nav_back').replace(/^←\s*/, '')}
               </button>
             ) : (
-              <span className="text-sm font-medium text-white">min-agent</span>
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="shrink-0">
+                  <MinuteAgentLogo />
+                </div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-sm font-medium text-zinc-100">Minute</span>
+                  <span className="rounded-full border border-orange-300/30 bg-orange-300/10 px-2 py-0.5 text-[11px] font-medium text-orange-200">
+                    Agent
+                  </span>
+                </div>
+              </div>
             )}
           </div>
           <div className="header-icons">
             {!showHistory && (
               <>
+                {messages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleCopyChatHistory}
+                    onKeyDown={e => e.key === 'Enter' && handleCopyChatHistory()}
+                    className="header-icon"
+                    aria-label="Copy entire chat history"
+                    title="Copy chat history"
+                    tabIndex={0}>
+                    {copyState === 'copied' ? <FiCheck size={20} /> : <FiCopy size={20} />}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleNewChat}
@@ -1029,9 +1520,9 @@ const SidePanel = () => {
           <>
             {/* Show loading state while checking model configuration */}
             {hasProviders === null && (
-              <div className="flex flex-1 items-center justify-center p-8 text-white/70">
+              <div className="flex flex-1 items-center justify-center p-8 text-bma-muted">
                 <div className="text-center">
-                  <div className="mx-auto mb-4 size-8 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                  <div className="mx-auto mb-4 size-8 animate-spin rounded-full border-2 border-zinc-800 border-t-orange-300"></div>
                   <p>{t('status_checkingConfig')}</p>
                 </div>
               </div>
@@ -1039,15 +1530,15 @@ const SidePanel = () => {
 
             {/* Show setup message when no models are configured */}
             {hasProviders === false && (
-              <div className="flex flex-1 items-center justify-center p-8 text-white/70">
-                <div className="max-w-md text-center">
-                  <h3 className="mb-2 text-lg font-semibold text-white">Add a provider</h3>
-                  <p className="mb-4 text-sm text-white/60">
+              <div className="flex flex-1 items-center justify-center p-6 text-bma-muted">
+                <div className="max-w-md rounded-xl border border-zinc-800 bg-[#111113] p-5 text-center shadow-xl shadow-black/20">
+                  <h3 className="mb-2 text-lg font-semibold text-zinc-100">Add a provider</h3>
+                  <p className="mb-4 text-sm text-zinc-400">
                     Connect a provider in settings, then pick a model next to the input.
                   </p>
                   <button
                     onClick={() => chrome.runtime.openOptionsPage()}
-                    className="my-4 rounded-lg bg-white px-4 py-2 text-sm font-medium text-black transition-opacity hover:opacity-85">
+                    className="my-2 cursor-pointer rounded-md bg-orange-300 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-orange-200">
                     Open settings
                   </button>
                 </div>
@@ -1058,11 +1549,16 @@ const SidePanel = () => {
             {hasProviders === true && (
               <>
                 {messages.length === 0 && (
-                  <>
-                    <div className="mb-2 border-t border-white/10 p-2">
-                      <div className="mb-2 flex items-center justify-between px-1">
-                        <span className="text-xs uppercase tracking-wide text-white/40">Model</span>
-                        <ModelSelector onModelConfigured={checkModelConfiguration} />
+                  <div className="flex flex-1 items-center justify-center bg-bma-bg p-4">
+                    <div className="w-full max-w-2xl">
+                      <div className="mb-5 text-center">
+                        <div className="mx-auto mb-3 grid size-11 place-items-center rounded-lg border border-zinc-800 bg-[#111113] text-orange-300">
+                          <FiClock className="size-5" />
+                        </div>
+                        <h1 className="text-xl font-semibold text-zinc-100">What should the browser do?</h1>
+                        <p className="mt-1 text-sm text-zinc-500">
+                          Tool calls and page actions will appear as structured run cards.
+                        </p>
                       </div>
                       <ChatInput
                         onSendMessage={handleSendMessage}
@@ -1075,26 +1571,38 @@ const SidePanel = () => {
                         setContent={setter => {
                           setInputTextRef.current = setter;
                         }}
-                        isDarkMode={true}
                         historicalSessionId={isHistoricalSession && replayEnabled ? currentSessionId : null}
                         onReplay={handleReplay}
+                        currentTabTitle={currentTabTitle}
+                        modelSelector={<ModelSelector onModelConfigured={checkModelConfiguration} />}
                       />
                     </div>
-                    <div className="flex-1 bg-black" />
-                  </>
-                )}
-                {messages.length > 0 && (
-                  <div className="scrollbar-gutter-stable flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth bg-black p-2">
-                    <MessageList messages={messages} isDarkMode={true} />
-                    <div ref={messagesEndRef} />
                   </div>
                 )}
                 {messages.length > 0 && (
-                  <div className="border-t border-white/10 p-2">
-                    <div className="mb-2 flex items-center justify-between px-1">
-                      <span className="text-xs uppercase tracking-wide text-white/40">Model</span>
-                      <ModelSelector onModelConfigured={checkModelConfiguration} />
-                    </div>
+                  <div
+                    ref={messagesScrollRef}
+                    onScroll={handleMessagesScroll}
+                    className="scrollbar-gutter-stable relative flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth bg-bma-bg">
+                    <MessageList messages={messages} isWorking={showStopButton} />
+                    <div ref={messagesEndRef} />
+                    {!autoFollowMessages && showStopButton && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAutoFollowMessages(true);
+                          scrollMessagesToBottom();
+                        }}
+                        className="sticky bottom-4 left-1/2 z-20 mx-auto flex -translate-x-1/2 cursor-pointer items-center gap-2 overflow-hidden rounded-full border border-orange-300/30 bg-[#1a1410]/95 px-4 py-2 text-sm font-medium text-orange-100 shadow-lg shadow-black/30 transition-colors hover:border-orange-200/50 hover:bg-[#241a13]">
+                        <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/10 to-transparent motion-safe:animate-[shimmer_1.4s_infinite]" />
+                        <FiArrowDown className="relative size-4" />
+                        <span className="relative">Working...</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+                {messages.length > 0 && (
+                  <div className="composer-dock border-t border-zinc-800 bg-bma-bg-soft p-3">
                     <ChatInput
                       onSendMessage={handleSendMessage}
                       onStopTask={handleStopTask}
@@ -1106,15 +1614,57 @@ const SidePanel = () => {
                       setContent={setter => {
                         setInputTextRef.current = setter;
                       }}
-                      isDarkMode={true}
                       historicalSessionId={isHistoricalSession && replayEnabled ? currentSessionId : null}
                       onReplay={handleReplay}
+                      currentTabTitle={currentTabTitle}
+                      modelSelector={<ModelSelector onModelConfigured={checkModelConfiguration} />}
                     />
                   </div>
                 )}
               </>
             )}
           </>
+        )}
+        {pendingAiSpaceRequest && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-sm rounded-lg border border-zinc-700 bg-[#111113] p-4 shadow-2xl shadow-black/40">
+              <div className="mb-3">
+                <h2 className="text-base font-semibold text-zinc-100">{t('aiSpace_access_title')}</h2>
+                <p className="mt-1 text-sm text-zinc-400">{t('aiSpace_access_description')}</p>
+              </div>
+              <div className="mb-4 rounded-md border border-zinc-800 bg-zinc-950 p-3">
+                <p className="truncate text-sm font-medium text-zinc-200">{pendingAiSpaceRequest.request.title}</p>
+                <p className="mt-1 break-all text-xs text-zinc-500">{pendingAiSpaceRequest.request.url}</p>
+                <p className="mt-2 text-xs text-zinc-400">{pendingAiSpaceRequest.request.reason}</p>
+              </div>
+              <label htmlFor="ai-space-decision" className="mb-1 block text-xs font-medium text-zinc-400">
+                {t('aiSpace_access_decision')}
+              </label>
+              <select
+                id="ai-space-decision"
+                value={aiSpaceDecisionMode}
+                onChange={event => setAiSpaceDecisionMode(event.target.value as 'once' | 'alwaysAllow' | 'alwaysDeny')}
+                className="mb-4 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                <option value="once">{t('aiSpace_access_once')}</option>
+                <option value="alwaysAllow">{t('aiSpace_access_alwaysAllow')}</option>
+                <option value="alwaysDeny">{t('aiSpace_access_alwaysDeny')}</option>
+              </select>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => respondToAiSpaceRequest(false)}
+                  className="rounded-md border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-white/[0.06]">
+                  {t('aiSpace_access_deny')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => respondToAiSpaceRequest(true)}
+                  className="rounded-md bg-orange-300 px-3 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-orange-200">
+                  {t('aiSpace_access_approve')}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

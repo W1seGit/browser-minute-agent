@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { FaMicrophone } from 'react-icons/fa';
 import { AiOutlineLoading3Quarters } from 'react-icons/ai';
-import { FiPaperclip, FiX } from 'react-icons/fi';
+import { FiPaperclip, FiSend, FiSquare, FiX } from 'react-icons/fi';
 import { t } from '@extension/i18n';
+import { PromptInput, PromptInputAction, PromptInputActions, PromptInputTextarea } from './prompt-kit/prompt-input';
 
 interface ChatInputProps {
   onSendMessage: (text: string, displayText?: string) => void;
@@ -13,10 +14,11 @@ interface ChatInputProps {
   disabled: boolean;
   showStopButton: boolean;
   setContent?: (setter: (text: string) => void) => void;
-  isDarkMode?: boolean;
   // Historical session ID - if provided, shows replay button instead of send button
   historicalSessionId?: string | null;
   onReplay?: (sessionId: string) => void;
+  currentTabTitle?: string;
+  modelSelector?: React.ReactNode;
 }
 
 // File attachment interface
@@ -35,9 +37,10 @@ export default function ChatInput({
   disabled,
   showStopButton,
   setContent,
-  isDarkMode = false,
   historicalSessionId,
   onReplay,
+  currentTabTitle,
+  modelSelector,
 }: ChatInputProps) {
   const [text, setText] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
@@ -45,21 +48,7 @@ export default function ChatInput({
     () => disabled || (text.trim() === '' && attachedFiles.length === 0),
     [disabled, text, attachedFiles],
   );
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Handle text changes and resize textarea
-  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newText = e.target.value;
-    setText(newText);
-
-    // Resize textarea
-    const textarea = textareaRef.current;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 100)}px`;
-    }
-  };
 
   // Expose a method to set content from outside
   useEffect(() => {
@@ -67,15 +56,6 @@ export default function ChatInput({
       setContent(setText);
     }
   }, [setContent]);
-
-  // Initial resize when component mounts
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 100)}px`;
-    }
-  }, []);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -112,16 +92,6 @@ export default function ChatInput({
       }
     },
     [text, attachedFiles, onSendMessage],
-  );
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-        e.preventDefault();
-        handleSubmit(e);
-      }
-    },
-    [handleSubmit],
   );
 
   const handleReplay = useCallback(() => {
@@ -184,31 +154,28 @@ export default function ChatInput({
   }, []);
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className={`overflow-hidden rounded-xl border border-white/15 bg-neutral-950 shadow-lg shadow-black/30 transition-colors ${disabled ? 'cursor-not-allowed opacity-60' : 'focus-within:border-white/70 hover:border-white/30'}`}
-      aria-label={t('chat_input_form')}>
-      <div className="flex flex-col">
+    <form onSubmit={handleSubmit} aria-label={t('chat_input_form')}>
+      <PromptInput
+        value={text}
+        onValueChange={setText}
+        onSubmit={() => handleSubmit({ preventDefault: () => undefined } as React.FormEvent)}
+        disabled={disabled}
+        isLoading={showStopButton || isProcessingSpeech}
+        maxHeight={132}
+        className="border-zinc-800 bg-[#111113] shadow-xl shadow-black/25 transition-colors focus-within:border-orange-300/60 hover:border-zinc-700">
         {/* File attachments display */}
         {attachedFiles.length > 0 && (
-          <div
-            className={`flex flex-wrap gap-2 border-b p-2 ${
-              isDarkMode ? 'border-white/10 bg-neutral-950' : 'border-gray-200 bg-gray-50'
-            }`}>
+          <div className="mb-2 flex flex-wrap gap-2 border-b border-zinc-800 px-2 pb-2">
             {attachedFiles.map((file, index) => (
               <div
                 key={index}
-                className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs ${
-                  isDarkMode ? 'bg-white/10 text-white/80' : 'bg-gray-200 text-gray-700'
-                }`}>
+                className="flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs text-zinc-300">
                 <FiPaperclip className="size-3" />
                 <span className="max-w-[150px] truncate">{file.name}</span>
                 <button
                   type="button"
                   onClick={() => handleRemoveFile(index)}
-                  className={`ml-1 rounded-sm transition-colors ${
-                    isDarkMode ? 'hover:bg-white/15' : 'hover:bg-gray-300'
-                  }`}
+                  className="ml-1 cursor-pointer rounded-sm transition-colors hover:bg-white/10 hover:text-zinc-100"
                   aria-label={`Remove ${file.name}`}>
                   <FiX className="size-3" />
                 </button>
@@ -217,45 +184,33 @@ export default function ChatInput({
           </div>
         )}
 
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={handleTextChange}
-          onKeyDown={handleKeyDown}
-          disabled={disabled}
+        {currentTabTitle && (
+          <div className="border-b border-zinc-800 px-3 pb-2 text-xs text-zinc-500">
+            <span className="font-medium text-zinc-400">Working in</span>{' '}
+            <span className="text-zinc-300">{currentTabTitle}</span>
+          </div>
+        )}
+
+        <PromptInputTextarea
           aria-disabled={disabled}
-          rows={5}
-          className={`w-full resize-none border-none p-2 focus:outline-none ${
-            disabled
-              ? isDarkMode
-                ? 'cursor-not-allowed bg-neutral-950 text-white/40'
-                : 'cursor-not-allowed bg-gray-100 text-gray-500'
-              : isDarkMode
-                ? 'bg-neutral-950 text-white placeholder:text-white/35'
-                : 'bg-white'
-          }`}
+          className="px-3 py-2 text-zinc-100 placeholder:text-zinc-600"
           placeholder={attachedFiles.length > 0 ? 'Add a message (optional)...' : t('chat_input_placeholder')}
           aria-label={t('chat_input_editor')}
         />
 
-        <div className="flex items-center justify-between bg-neutral-950 px-2 py-1.5">
-          <div className="flex gap-2 text-white/60">
+        <div className="flex items-center justify-between px-1 pb-1 pt-2">
+          <PromptInputActions className="text-zinc-500">
             {/* File attachment button */}
-            <button
-              type="button"
-              onClick={handleFileSelect}
-              disabled={disabled}
-              aria-label="Attach files"
-              title="Attach text files (txt, md, json, csv, etc.)"
-              className={`rounded-md p-1.5 transition-colors ${
-                disabled
-                  ? 'cursor-not-allowed opacity-50'
-                  : isDarkMode
-                    ? 'text-white/50 hover:bg-white/10 hover:text-white'
-                    : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
-              }`}>
-              <FiPaperclip className="size-4" />
-            </button>
+            <PromptInputAction tooltip="Attach text files" disabled={disabled}>
+              <button
+                type="button"
+                onClick={handleFileSelect}
+                disabled={disabled}
+                aria-label="Attach files"
+                className="cursor-pointer rounded-md p-2 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50">
+                <FiPaperclip className="size-4" />
+              </button>
+            </PromptInputAction>
 
             {/* Hidden file input */}
             <input
@@ -269,41 +224,42 @@ export default function ChatInput({
             />
 
             {onMicClick && (
-              <button
-                type="button"
-                onClick={onMicClick}
-                disabled={disabled || isProcessingSpeech}
-                aria-label={
-                  isProcessingSpeech
-                    ? t('chat_stt_processing')
-                    : isRecording
-                      ? t('chat_stt_recording_stop')
-                      : t('chat_stt_input_start')
-                }
-                className={`rounded-md p-1.5 transition-colors ${
-                  disabled || isProcessingSpeech
-                    ? 'cursor-not-allowed opacity-50'
-                    : isRecording
-                      ? 'bg-red-500 text-white hover:bg-red-600'
-                      : isDarkMode
-                        ? 'text-white/50 hover:bg-white/10 hover:text-white'
-                        : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
-                }`}>
-                {isProcessingSpeech ? (
-                  <AiOutlineLoading3Quarters className="size-4 animate-spin" />
-                ) : (
-                  <FaMicrophone className={`size-4 ${isRecording ? 'animate-pulse' : ''}`} />
-                )}
-              </button>
+              <PromptInputAction
+                tooltip={isProcessingSpeech ? t('chat_stt_processing') : t('chat_stt_input_start')}
+                disabled={disabled || isProcessingSpeech}>
+                <button
+                  type="button"
+                  onClick={onMicClick}
+                  disabled={disabled || isProcessingSpeech}
+                  aria-label={
+                    isProcessingSpeech
+                      ? t('chat_stt_processing')
+                      : isRecording
+                        ? t('chat_stt_recording_stop')
+                        : t('chat_stt_input_start')
+                  }
+                  className={`cursor-pointer rounded-xl p-2 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    isRecording
+                      ? 'bg-rose-500 text-white hover:bg-rose-600'
+                      : 'text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-100'
+                  }`}>
+                  {isProcessingSpeech ? (
+                    <AiOutlineLoading3Quarters className="size-4 animate-spin" />
+                  ) : (
+                    <FaMicrophone className={`size-4 ${isRecording ? 'animate-pulse' : ''}`} />
+                  )}
+                </button>
+              </PromptInputAction>
             )}
-          </div>
+          </PromptInputActions>
 
           {showStopButton ? (
             <button
               type="button"
               onClick={onStopTask}
-              className="rounded-md bg-red-500 px-3 py-1 text-white transition-colors hover:bg-red-600">
-              {t('chat_buttons_stop')}
+              className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-rose-500 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-rose-600">
+              <FiSquare className="size-3.5" />
+              <span>{t('chat_buttons_stop')}</span>
             </button>
           ) : historicalSessionId ? (
             <button
@@ -311,20 +267,25 @@ export default function ChatInput({
               onClick={handleReplay}
               disabled={!historicalSessionId}
               aria-disabled={!historicalSessionId}
-              className={`rounded-md bg-green-500 px-3 py-1 text-white transition-colors hover:enabled:bg-green-600 ${!historicalSessionId ? 'cursor-not-allowed opacity-50' : ''}`}>
+              className={`rounded-md bg-emerald-300 px-3.5 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:enabled:bg-emerald-200 ${!historicalSessionId ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
               {t('chat_buttons_replay')}
             </button>
           ) : (
-            <button
-              type="submit"
-              disabled={isSendButtonDisabled}
-              aria-disabled={isSendButtonDisabled}
-              className={`rounded-md bg-white px-3 py-1 text-black transition-opacity hover:enabled:opacity-85 ${isSendButtonDisabled ? 'cursor-not-allowed opacity-40' : ''}`}>
-              {t('chat_buttons_send')}
-            </button>
+            <div className="flex items-center gap-2">
+              {modelSelector}
+              <button
+                type="submit"
+                disabled={isSendButtonDisabled}
+                aria-disabled={isSendButtonDisabled}
+                aria-label={t('chat_buttons_send')}
+                title={t('chat_buttons_send')}
+                className={`inline-grid size-9 place-items-center rounded-md bg-orange-300 text-zinc-950 transition-colors hover:enabled:bg-orange-200 ${isSendButtonDisabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}>
+                <FiSend className="size-4" />
+              </button>
+            </div>
           )}
         </div>
-      </div>
+      </PromptInput>
     </form>
   );
 }

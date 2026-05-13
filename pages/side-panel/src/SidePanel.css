@@ -1,44 +1,67 @@
-/* Add this at the top of the file */
-body {
-  background: #000;
-  color: #fff;
+:root {
+  --bma-bg: #09090b;
+  --bma-bg-soft: #0f0f10;
+  --bma-surface: #111113;
+  --bma-elevated: #18181b;
+  --bma-border: #27272a;
+  --bma-text: #f4f4f5;
+  --bma-subtle: #d4d4d8;
+  --bma-muted: #71717a;
+  --bma-accent: #fdba74;
+  --bma-accent-strong: #fb923c;
+  --bma-accent-text: #18181b;
+  --bma-success: #34d399;
+  --bma-code: #030303;
 }
 
-/* Remove unused classes: .App, .App-logo, .App-header */
+body {
+  background: var(--bma-bg);
+  color: var(--bma-text);
+  font-feature-settings:
+    'cv02' 1,
+    'cv03' 1,
+    'cv04' 1;
+}
+
+.side-panel-shell {
+  background:
+    radial-gradient(circle at top left, rgba(251, 146, 60, 0.1), transparent 34rem),
+    linear-gradient(180deg, #09090b 0%, #0f0f10 100%);
+}
 
 code {
-  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(113, 113, 122, 0.25);
   border-radius: 0.25rem;
-  padding: 0.2rem 0.5rem;
-  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0.15rem 0.35rem;
+  color: var(--bma-text);
 }
 
-/* Scrollbar styles */
 ::-webkit-scrollbar {
   width: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #000;
+  background: var(--bma-bg);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.28);
+  background: #3f3f46;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.5);
+  background: #52525b;
 }
 
-/* Used classes from the component */
 .header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--bma-border);
+  background: rgba(9, 9, 11, 0.88);
   padding: 0.75rem;
-  background-color: transparent;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(14px);
 }
 
 .header-logo {
@@ -48,40 +71,201 @@ code {
 
 .header-icons {
   display: flex;
-  gap: 0.5rem;
   align-items: center;
+  gap: 0.375rem;
 }
 
 .header-icon {
-  color: rgba(255, 255, 255, 0.72);
+  display: inline-flex;
+  min-height: 44px;
+  min-width: 44px;
   cursor: pointer;
-  transition: color 0.2s ease;
-  opacity: 1;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  color: var(--bma-muted);
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
-.header-icon:hover {
-  color: #fff;
+.header-icon:hover,
+.header-icon:focus-visible {
+  border-color: var(--bma-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--bma-text);
+  outline: none;
 }
 
-/* Add these styles to your existing CSS */
+.composer-dock {
+  box-shadow: 0 -16px 40px rgba(0, 0, 0, 0.24);
+}
+
 .scrollbar-gutter-stable {
   scrollbar-gutter: stable;
 }
 
-/* Optional: Style the scrollbar for webkit browsers */
-.scrollbar-gutter-stable::-webkit-scrollbar {
-  width: 8px;
+@keyframes shimmer {
+  100% {
+    transform: translateX(220%);
+  }
 }
 
-.scrollbar-gutter-stable::-webkit-scrollbar-track {
-  background: #000;
+.bg-bma-bg {
+  background-color: var(--bma-bg);
 }
 
-.scrollbar-gutter-stable::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.28);
-  border-radius: 4px;
+.bg-bma-bg-soft {
+  background-color: var(--bma-bg-soft);
 }
 
-.scrollbar-gutter-stable::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.5);
+.bg-bma-surface {
+  background-color: var(--bma-surface);
+}
+
+.bg-bma-elevated {
+  background-color: var(--bma-elevated);
+}
+
+.bg-bma-code {
+  background-color: var(--bma-code);
+}
+
+.bg-bma-accent {
+  background-color: var(--bma-accent);
+}
+
+.bg-bma-success {
+  background-color: var(--bma-success);
+}
+
+.border-bma-border {
+  border-color: var(--bma-border);
+}
+
+.border-t-bma-accent {
+  border-top-color: var(--bma-accent);
+}
+
+.text-bma-text {
+  color: var(--bma-text);
+}
+
+.text-bma-subtle {
+  color: var(--bma-subtle);
+}
+
+.text-bma-muted {
+  color: var(--bma-muted);
+}
+
+.text-bma-accent {
+  color: var(--bma-accent);
+}
+
+.text-bma-accentText {
+  color: var(--bma-accent-text);
+}
+
+.text-bma-success {
+  color: var(--bma-success);
+}
+
+.bma-markdown {
+  color: inherit;
+}
+
+.bma-markdown > *:first-child {
+  margin-top: 0;
+}
+
+.bma-markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.bma-markdown p,
+.bma-markdown ul,
+.bma-markdown ol,
+.bma-markdown blockquote,
+.bma-markdown pre,
+.bma-markdown table {
+  margin: 0.75rem 0;
+}
+
+.bma-markdown ul,
+.bma-markdown ol {
+  padding-left: 1.25rem;
+}
+
+.bma-markdown ul {
+  list-style: disc;
+}
+
+.bma-markdown ol {
+  list-style: decimal;
+}
+
+.bma-markdown strong {
+  color: var(--bma-text);
+  font-weight: 650;
+}
+
+.bma-markdown-user strong {
+  color: var(--bma-accent-text);
+}
+
+.bma-markdown a {
+  color: #93c5fd;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.bma-markdown-user a {
+  color: #7c2d12;
+}
+
+.bma-markdown pre {
+  overflow-x: auto;
+  border: 1px solid var(--bma-border);
+  border-radius: 0.5rem;
+  background: var(--bma-code);
+  padding: 0.875rem;
+}
+
+.bma-markdown pre code {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.bma-markdown blockquote {
+  border-left: 2px solid var(--bma-accent);
+  color: var(--bma-subtle);
+  padding-left: 0.875rem;
+}
+
+.bma-markdown table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.bma-markdown th,
+.bma-markdown td {
+  border: 1px solid var(--bma-border);
+  padding: 0.45rem 0.6rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

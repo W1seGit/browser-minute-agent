@@ -197,6 +197,33 @@ export function createChatHistoryStorage(): ChatHistoryStorage {
       return newMessage;
     },
 
+    replaceMessages: async (sessionId: string, messages: Message[]): Promise<void> => {
+      const sessionsMeta = await chatSessionsMetaStorage.get();
+      const sessionMeta = sessionsMeta.find(session => session.id === sessionId);
+      if (!sessionMeta) {
+        throw new Error(`Session with ID ${sessionId} not found`);
+      }
+
+      const messagesStorage = getSessionMessagesStorage(sessionId);
+      const nextMessages: ChatMessage[] = messages.map(message => ({
+        ...message,
+        id: 'id' in message && typeof message.id === 'string' ? message.id : crypto.randomUUID(),
+      }));
+
+      await messagesStorage.set(nextMessages);
+      await chatSessionsMetaStorage.set(prevSessions =>
+        prevSessions.map(session =>
+          session.id === sessionId
+            ? {
+                ...session,
+                updatedAt: getCurrentTimestamp(),
+                messageCount: nextMessages.length,
+              }
+            : session,
+        ),
+      );
+    },
+
     deleteMessage: async (sessionId: string, messageId: string): Promise<void> => {
       // Get the messages storage for this session
       const messagesStorage = getSessionMessagesStorage(sessionId);
