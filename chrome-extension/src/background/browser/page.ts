@@ -58,6 +58,17 @@ export class CachedStateClickableElementsHashes {
   }
 }
 
+export type ExtractContentMode = 'visible_text' | 'readability' | 'links' | 'tables' | 'forms';
+
+export interface ExtractedPageContent {
+  mode: ExtractContentMode;
+  url: string;
+  title: string;
+  content: string;
+  itemCount?: number;
+  truncated: boolean;
+}
+
 export default class Page {
   private _tabId: number;
   private _browser: Browser | null = null;
@@ -373,6 +384,91 @@ export default class Page {
     this._cachedState = updatedState;
 
     return updatedState;
+  }
+
+  async extractContent(mode: ExtractContentMode, maxChars = 8000): Promise<ExtractedPageContent> {
+    if (!this._puppeteerPage) {
+      throw new Error('Puppeteer page is not connected');
+    }
+
+    const result = await this._puppeteerPage.evaluate(extractMode => {
+      const clean = (value: string | null | undefined) => (value || '').replace(/\s+/g, ' ').trim();
+
+      if (extractMode === 'readability') {
+        const readability = window.parserReadability?.();
+        return {
+          content: clean(readability?.textContent || document.body?.innerText),
+          itemCount: readability ? 1 : 0,
+        };
+      }
+
+      if (extractMode === 'links') {
+        const links = Array.from(document.querySelectorAll('a[href]'))
+          .map(anchor => {
+            const link = anchor as HTMLAnchorElement;
+            return { text: clean(link.innerText || link.getAttribute('aria-label')), href: link.href };
+          })
+          .filter(link => link.href)
+          .slice(0, 200);
+
+        return {
+          content: links.map(link => `- ${link.text || '(no text)'}: ${link.href}`).join('\n'),
+          itemCount: links.length,
+        };
+      }
+
+      if (extractMode === 'tables') {
+        const tables = Array.from(document.querySelectorAll('table'))
+          .map((table, tableIndex) => {
+            const rows = Array.from(table.querySelectorAll('tr'))
+              .map(row =>
+                Array.from(row.querySelectorAll('th,td'))
+                  .map(cell => clean(cell.textContent))
+                  .filter(Boolean)
+                  .join(' | '),
+              )
+              .filter(Boolean)
+              .slice(0, 80);
+            return rows.length > 0 ? `Table ${tableIndex + 1}\n${rows.join('\n')}` : '';
+          })
+          .filter(Boolean);
+
+        return { content: tables.join('\n\n'), itemCount: tables.length };
+      }
+
+      if (extractMode === 'forms') {
+        const fields = Array.from(document.querySelectorAll('input, textarea, select, button'))
+          .map((element, index) => {
+            const input = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement;
+            const id = input.id ? document.querySelector(`label[for="${CSS.escape(input.id)}"]`)?.textContent : '';
+            const label =
+              clean(id) ||
+              clean(input.getAttribute('aria-label')) ||
+              clean(input.getAttribute('placeholder')) ||
+              clean(input.name) ||
+              clean(input.textContent);
+            const tag = input.tagName.toLowerCase();
+            const type = 'type' in input && input.type ? ` type=${input.type}` : '';
+            return `${index + 1}. <${tag}${type}> ${label || '(unlabeled)'}`;
+          })
+          .slice(0, 200);
+
+        return { content: fields.join('\n'), itemCount: fields.length };
+      }
+
+      return { content: clean(document.body?.innerText), itemCount: 1 };
+    }, mode);
+
+    const content = result.content || '';
+    const truncated = content.length > maxChars;
+    return {
+      mode,
+      url: this._puppeteerPage.url(),
+      title: await this._puppeteerPage.title(),
+      content: truncated ? content.slice(0, maxChars) : content,
+      itemCount: result.itemCount,
+      truncated,
+    };
   }
 
   async _updateState(useVision = false, focusElement = -1): Promise<PageState> {

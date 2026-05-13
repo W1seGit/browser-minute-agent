@@ -84,6 +84,7 @@ chrome.runtime.onConnect.addListener(port => {
             if (!message.tabId) return port.postMessage({ type: 'error', error: t('bg_errors_noTabId') });
 
             logger.info('new_task', message.tabId, message.task);
+            await browserContext.ensureAiSpace(message.tabId);
             currentExecutor = await setupExecutor(message.taskId, message.task, browserContext);
             subscribeToExecutorEvents(currentExecutor);
 
@@ -97,6 +98,7 @@ chrome.runtime.onConnect.addListener(port => {
             if (!message.tabId) return port.postMessage({ type: 'error', error: t('bg_errors_noTabId') });
 
             logger.info('follow_up_task', message.tabId, message.task);
+            await browserContext.ensureAiSpace(message.tabId);
 
             // If executor exists, add follow-up task
             if (currentExecutor) {
@@ -210,6 +212,7 @@ chrome.runtime.onConnect.addListener(port => {
 
             try {
               // Switch to the specified tab
+              await browserContext.ensureAiSpace(message.tabId);
               await browserContext.switchTab(message.tabId);
               // Setup executor with the new taskId and a dummy task description
               currentExecutor = await setupExecutor(message.taskId, message.task, browserContext);

@@ -108,6 +108,12 @@ export class ActionResult {
   error: string | null;
   includeInMemory: boolean;
   interactedElement: DOMHistoryElement | null;
+  toolName: string | null;
+  pageChanged: boolean;
+  newTabOpened: boolean;
+  currentUrl: string | null;
+  requiresUserInput: boolean;
+  data: unknown;
 
   constructor(params: Partial<ActionResult> = {}) {
     this.isDone = params.isDone ?? false;
@@ -116,6 +122,12 @@ export class ActionResult {
     this.extractedContent = params.extractedContent ?? null;
     this.error = params.error ?? null;
     this.includeInMemory = params.includeInMemory ?? false;
+    this.toolName = params.toolName ?? null;
+    this.pageChanged = params.pageChanged ?? false;
+    this.newTabOpened = params.newTabOpened ?? false;
+    this.currentUrl = params.currentUrl ?? null;
+    this.requiresUserInput = params.requiresUserInput ?? false;
+    this.data = params.data ?? null;
   }
 }
 

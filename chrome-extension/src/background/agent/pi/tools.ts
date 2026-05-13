@@ -3,6 +3,7 @@ import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { ActionResult, type AgentContext } from '../types';
 import { createLogger } from '@src/background/log';
 import { t } from '@extension/i18n';
+import type { ExtractContentMode } from '../../browser/page';
 
 const logger = createLogger('PiTools');
 
@@ -18,6 +19,28 @@ function buildResult(result: ActionResult): AgentToolResult<unknown> {
     details: result,
     terminate: result.isDone,
   };
+}
+
+async function resultWithCurrentUrl(context: AgentContext, result: ActionResult): Promise<ActionResult> {
+  const page = await context.browserContext.getCurrentPage();
+  const state = page.getCachedState() ?? (await page.getState(false));
+  result.currentUrl = state.url;
+  return result;
+}
+
+function formatBrowserState(
+  context: AgentContext,
+  state: Awaited<ReturnType<AgentContext['browserContext']['getState']>>,
+) {
+  const tabs = state.tabs.map(tab => `Tab ${tab.id}: ${tab.title || '(untitled)'} - ${tab.url}`).join('\n');
+  const elementsText = state.elementTree.clickableElementsToString(context.options.includeAttributes);
+  return [
+    `URL: ${state.url}`,
+    `Title: ${state.title}`,
+    `Scroll: ${state.scrollY}/${state.scrollHeight} viewport=${state.visualViewportHeight}`,
+    `Tabs:\n${tabs || '(none)'}`,
+    `Interactive elements:\n${elementsText || '(none)'}`,
+  ].join('\n\n');
 }
 
 function createTool<T extends TSchema>(
@@ -50,6 +73,7 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         const text = params.text ?? '';
         context.finalAnswer = text;
         const result = new ActionResult({
+          toolName: 'done',
           isDone: true,
           success: params.success,
           extractedContent: text || 'Task completed',
@@ -58,6 +82,36 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
           ctx.onDone(text, params.success ?? true);
         }
         return buildResult(result);
+      },
+    ),
+
+    createTool(
+      'observe',
+      'observe',
+      'Refresh and return the current browser state. Use this after uncertainty, unexpected results, or before choosing an element when recent state may be stale.',
+      Type.Object({
+        intent: optionalIntent,
+      }),
+      async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
+        void params.intent;
+        const state = await context.browserContext.getState(context.options.useVision, true);
+        return buildResult(
+          new ActionResult({
+            toolName: 'observe',
+            success: true,
+            extractedContent: formatBrowserState(context, state),
+            includeInMemory: false,
+            currentUrl: state.url,
+            data: {
+              url: state.url,
+              title: state.title,
+              tabCount: state.tabs.length,
+              interactiveElementCount: state.selectorMap.size,
+              scrollY: state.scrollY,
+              scrollHeight: state.scrollHeight,
+            },
+          }),
+        );
       },
     ),
 
@@ -73,7 +127,18 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         void params.intent;
         await context.browserContext.navigateTo(`https://www.google.com/search?q=${encodeURIComponent(params.query)}`);
         const msg = t('act_searchGoogle_ok', [params.query]);
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'search_google',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              pageChanged: true,
+            }),
+          ),
+        );
       },
     ),
 
@@ -89,7 +154,18 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         void params.intent;
         await context.browserContext.navigateTo(params.url);
         const msg = t('act_goToUrl_ok', [params.url]);
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'go_to_url',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              pageChanged: true,
+            }),
+          ),
+        );
       },
     ),
 
@@ -103,7 +179,42 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         const page = await context.browserContext.getCurrentPage();
         await page.goBack();
         const msg = t('act_goBack_ok');
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'go_back',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              pageChanged: true,
+            }),
+          ),
+        );
+      },
+    ),
+
+    createTool(
+      'reload',
+      'reload',
+      'Reload the current page. Use this only when the page appears stale, broken, or partially loaded.',
+      Type.Object({ intent: optionalIntent }),
+      async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
+        void params.intent;
+        const page = await context.browserContext.getCurrentPage();
+        await page.refreshPage();
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'reload',
+              success: true,
+              extractedContent: 'Reloaded current page',
+              includeInMemory: true,
+              pageChanged: true,
+            }),
+          ),
+        );
       },
     ),
 
@@ -127,20 +238,45 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         if (page.isFileUploader(elementNode)) {
           const msg = t('act_click_fileUploader', [params.index.toString()]);
           logger.info(msg);
-          return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+          return buildResult(
+            new ActionResult({
+              toolName: 'click_element',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              data: { index: params.index, fileUploader: true },
+            }),
+          );
         }
         const initialTabIds = await context.browserContext.getAllTabIds();
+        const beforeUrl = state.url;
         await page.clickElementNode(context.options.useVision, elementNode);
         let msg = t('act_click_ok', [params.index.toString(), elementNode.getAllTextTillNextClickableElement(2)]);
         msg += '\n\nClick succeeded. For editor/input/terminal targets, use input_text next.';
         await page.waitForPageAndFramesLoad();
         const newTabIds = await context.browserContext.getAllTabIds();
+        let newTabOpened = false;
         if (newTabIds.size > initialTabIds.size) {
+          newTabOpened = true;
           msg += '\n\nNew tab opened. Focused on new tab.';
           const newTabs = Array.from(newTabIds);
-          await context.browserContext.switchTab(newTabs[newTabs.length - 1]);
+          const newTabId = newTabs[newTabs.length - 1];
+          await context.browserContext.addTabsToAiSpace([newTabId]);
+          await context.browserContext.switchTab(newTabId);
         }
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        const afterState = await context.browserContext.getState(context.options.useVision, true);
+        return buildResult(
+          new ActionResult({
+            toolName: 'click_element',
+            success: true,
+            extractedContent: msg,
+            includeInMemory: true,
+            pageChanged: newTabOpened || afterState.url !== beforeUrl,
+            newTabOpened,
+            currentUrl: afterState.url,
+            data: { index: params.index, xpath: params.xpath ?? null },
+          }),
+        );
       },
     ),
 
@@ -157,7 +293,18 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         const page = await context.browserContext.getCurrentPage();
         await page.typeText(params.text, signal);
         const msg = `Typed text: ${params.text}`;
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'input_text',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              data: { textLength: params.text.length },
+            }),
+          ),
+        );
       },
     ),
 
@@ -197,7 +344,18 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         }
 
         const msg = `Filled ${filled.length} field${filled.length === 1 ? '' : 's'}: ${filled.join(', ')}`;
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'fill_form_fields',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              data: { fields: params.fields.map(field => ({ index: field.index, label: field.label ?? null })) },
+            }),
+          ),
+        );
       },
     ),
 
@@ -213,7 +371,19 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         void params.intent;
         await context.browserContext.switchTab(params.tab_id);
         const msg = t('act_switchTab_ok', [params.tab_id.toString()]);
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'switch_tab',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              pageChanged: true,
+              data: { tabId: params.tab_id },
+            }),
+          ),
+        );
       },
     ),
 
@@ -229,7 +399,19 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         void params.intent;
         await context.browserContext.openTab(params.url);
         const msg = t('act_openTab_ok', [params.url]);
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'open_tab',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              pageChanged: true,
+              newTabOpened: true,
+            }),
+          ),
+        );
       },
     ),
 
@@ -245,7 +427,19 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         void params.intent;
         await context.browserContext.closeTab(params.tab_id);
         const msg = t('act_closeTab_ok', [params.tab_id.toString()]);
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'close_tab',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              pageChanged: true,
+              data: { tabId: params.tab_id },
+            }),
+          ),
+        );
       },
     ),
 
@@ -259,7 +453,63 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
       }),
       async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
         void params.intent;
-        return buildResult(new ActionResult({ extractedContent: params.content, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'cache_content',
+              success: true,
+              extractedContent: params.content,
+              includeInMemory: true,
+              data: { contentLength: params.content.length },
+            }),
+          ),
+        );
+      },
+    ),
+
+    createTool(
+      'extract_content',
+      'extract_content',
+      'Deterministically extract page content without summarizing. Use visible_text for what is on the page, readability for article text, links for URLs, tables for tabular data, and forms for available form controls.',
+      Type.Object({
+        intent: optionalIntent,
+        mode: Type.Union(
+          [
+            Type.Literal('visible_text'),
+            Type.Literal('readability'),
+            Type.Literal('links'),
+            Type.Literal('tables'),
+            Type.Literal('forms'),
+          ],
+          { default: 'visible_text', description: 'content extraction mode' },
+        ),
+        maxChars: Type.Optional(Type.Number({ default: 8000, description: 'maximum characters to return' })),
+      }),
+      async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
+        void params.intent;
+        const page = await context.browserContext.getCurrentPage();
+        const extracted = await page.extractContent(params.mode as ExtractContentMode, params.maxChars ?? 8000);
+        const header = [
+          `Mode: ${extracted.mode}`,
+          `URL: ${extracted.url}`,
+          `Title: ${extracted.title}`,
+          extracted.itemCount !== undefined ? `Items: ${extracted.itemCount}` : '',
+          extracted.truncated ? 'Truncated: true' : 'Truncated: false',
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        return buildResult(
+          new ActionResult({
+            toolName: 'extract_content',
+            success: true,
+            extractedContent: `${header}\n\n${extracted.content || '(no content found)'}`,
+            includeInMemory: true,
+            currentUrl: extracted.url,
+            data: extracted,
+          }),
+        );
       },
     ),
 
@@ -281,7 +531,23 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         const elementNode = params.index != null ? state?.selectorMap.get(params.index) : undefined;
         await page.scroll(params.direction, elementNode);
         const msg = `Scrolled ${params.direction}`;
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        const nextState = await context.browserContext.getState(context.options.useVision, true);
+        return buildResult(
+          new ActionResult({
+            toolName: 'scroll',
+            success: true,
+            extractedContent: msg,
+            includeInMemory: true,
+            pageChanged: true,
+            currentUrl: nextState.url,
+            data: {
+              direction: params.direction,
+              index: params.index ?? null,
+              scrollY: nextState.scrollY,
+              scrollHeight: nextState.scrollHeight,
+            },
+          }),
+        );
       },
     ),
 
@@ -301,7 +567,19 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         const page = await context.browserContext.getCurrentPage();
         await page.scrollToText(params.text, params.nth ?? 1);
         const msg = t('act_scrollToText_ok', [params.text]);
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'scroll_to_text',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              pageChanged: true,
+              data: { text: params.text, nth: params.nth ?? 1 },
+            }),
+          ),
+        );
       },
     ),
 
@@ -318,7 +596,18 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         const page = await context.browserContext.getCurrentPage();
         await page.sendKeys(params.keys);
         const msg = t('act_sendKeys_ok', [params.keys]);
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'send_keys',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              data: { keys: params.keys },
+            }),
+          ),
+        );
       },
     ),
 
@@ -335,7 +624,18 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         const page = await context.browserContext.getCurrentPage();
         const options = await page.getDropdownOptions(params.index);
         const msg = `Dropdown options: ${JSON.stringify(options)}`;
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'get_dropdown_options',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              data: { index: params.index, options },
+            }),
+          ),
+        );
       },
     ),
 
@@ -353,7 +653,18 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         const page = await context.browserContext.getCurrentPage();
         await page.selectDropdownOption(params.index, params.text);
         const msg = t('act_selectDropdownOption_ok', [params.text, params.index.toString()]);
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'select_dropdown_option',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              data: { index: params.index, text: params.text },
+            }),
+          ),
+        );
       },
     ),
 
@@ -370,7 +681,76 @@ export function createBrowserTools(ctx: PiToolContext): AgentTool[] {
         void params.intent;
         await new Promise(resolve => setTimeout(resolve, seconds * 1000));
         const msg = t('act_wait_ok', [seconds.toString()]);
-        return buildResult(new ActionResult({ extractedContent: msg, includeInMemory: true }));
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'wait',
+              success: true,
+              extractedContent: msg,
+              includeInMemory: true,
+              data: { seconds },
+            }),
+          ),
+        );
+      },
+    ),
+
+    createTool(
+      'ask_user',
+      'ask_user',
+      'Ask the user for missing information that cannot be inferred safely, such as exact text to type or a required preference.',
+      Type.Object({
+        question: Type.String({ description: 'specific question for the user' }),
+        reason: Type.Optional(Type.String({ description: 'why this input is required' })),
+      }),
+      async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
+        const message = params.reason ? `${params.question}\n\nReason: ${params.reason}` : params.question;
+        context.finalAnswer = message;
+        if (ctx.onDone) {
+          ctx.onDone(message, false);
+        }
+        return buildResult(
+          new ActionResult({
+            toolName: 'ask_user',
+            isDone: true,
+            success: false,
+            extractedContent: message,
+            requiresUserInput: true,
+            data: { question: params.question, reason: params.reason ?? null },
+          }),
+        );
+      },
+    ),
+
+    createTool(
+      'request_user_login',
+      'request_user_login',
+      'Pause when a site requires authentication. Ask the user to sign in manually, then continue in a follow-up after they are signed in.',
+      Type.Object({
+        reason: Type.Optional(Type.String({ description: 'brief description of the login gate' })),
+      }),
+      async (_toolCallId, params): Promise<AgentToolResult<unknown>> => {
+        const message = params.reason
+          ? `Please sign in manually so I can continue. ${params.reason}`
+          : 'Please sign in manually so I can continue.';
+        context.finalAnswer = message;
+        if (ctx.onDone) {
+          ctx.onDone(message, false);
+        }
+        return buildResult(
+          await resultWithCurrentUrl(
+            context,
+            new ActionResult({
+              toolName: 'request_user_login',
+              isDone: true,
+              success: false,
+              extractedContent: message,
+              requiresUserInput: true,
+              data: { reason: params.reason ?? null },
+            }),
+          ),
+        );
       },
     ),
   ];

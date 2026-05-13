@@ -298,7 +298,7 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
       if (context.stopped || signal?.aborted) {
         return { block: true, reason: 'Task cancelled' };
       }
-      if (underspecifiedTypingTask && toolCall.name !== 'done') {
+      if (underspecifiedTypingTask && !['ask_user', 'done'].includes(toolCall.name)) {
         return {
           block: true,
           reason: 'The user asked to type into a page, but did not provide the exact text. Ask the user what to type.',

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { FiArrowDown, FiArrowLeft, FiClock, FiSettings } from 'react-icons/fi';
+import { FiArrowDown, FiArrowLeft, FiCheck, FiClock, FiCopy, FiSettings } from 'react-icons/fi';
 import { PiPlusBold } from 'react-icons/pi';
 import { GrHistory } from 'react-icons/gr';
 import {
@@ -180,6 +180,37 @@ function normalizeToolPayload(payload: unknown) {
   };
 }
 
+function formatMessageForClipboard(message: Message) {
+  const tool = parseToolMessageContent(message.content);
+  if (tool) {
+    const lines = [`[tool:${tool.name}] ${tool.state}`];
+    if (tool.input !== undefined) lines.push(`input: ${JSON.stringify(tool.input)}`);
+    if (tool.output !== undefined) lines.push(`output: ${JSON.stringify(tool.output)}`);
+    if (tool.errorText) lines.push(`error: ${tool.errorText}`);
+    return lines.join('\n');
+  }
+
+  if (message.content.startsWith(REASONING_MESSAGE_PREFIX)) {
+    try {
+      const parsed = JSON.parse(message.content.slice(REASONING_MESSAGE_PREFIX.length)) as { text?: string };
+      return `[thinking]\n${parsed.text ?? ''}`;
+    } catch {
+      return '[thinking]';
+    }
+  }
+
+  return message.content;
+}
+
+function formatChatHistoryForClipboard(messages: Message[]) {
+  return messages
+    .map(message => {
+      const time = new Date(message.timestamp).toLocaleString();
+      return `## ${message.actor} - ${time}\n${formatMessageForClipboard(message)}`;
+    })
+    .join('\n\n');
+}
+
 const SidePanel = () => {
   const progressMessage = 'Showing progress...';
   const [messages, setMessages] = useState<Message[]>([]);
@@ -195,6 +226,7 @@ const SidePanel = () => {
   const [isProcessingSpeech, setIsProcessingSpeech] = useState(false);
   const [replayEnabled, setReplayEnabled] = useState(false);
   const [autoFollowMessages, setAutoFollowMessages] = useState(true);
+  const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
   const sessionIdRef = useRef<string | null>(null);
   const portRef = useRef<chrome.runtime.Port | null>(null);
   const heartbeatIntervalRef = useRef<number | null>(null);
@@ -1009,6 +1041,23 @@ const SidePanel = () => {
     stopConnection();
   };
 
+  const handleCopyChatHistory = async () => {
+    if (messages.length === 0) return;
+
+    try {
+      await navigator.clipboard.writeText(formatChatHistoryForClipboard(messages));
+      setCopyState('copied');
+      window.setTimeout(() => setCopyState('idle'), 1600);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      appendMessage({
+        actor: Actors.SYSTEM,
+        content: `Failed to copy chat history: ${errorMessage}`,
+        timestamp: Date.now(),
+      });
+    }
+  };
+
   const loadChatSessions = useCallback(async () => {
     try {
       const sessions = await chatHistoryStore.getSessionsMetadata();
@@ -1318,6 +1367,18 @@ const SidePanel = () => {
           <div className="header-icons">
             {!showHistory && (
               <>
+                {messages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleCopyChatHistory}
+                    onKeyDown={e => e.key === 'Enter' && handleCopyChatHistory()}
+                    className="header-icon"
+                    aria-label="Copy entire chat history"
+                    title="Copy chat history"
+                    tabIndex={0}>
+                    {copyState === 'copied' ? <FiCheck size={20} /> : <FiCopy size={20} />}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleNewChat}
