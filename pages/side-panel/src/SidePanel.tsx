@@ -52,6 +52,18 @@ type ParsedToolDetails = {
   errorText?: string;
 };
 
+type AiSpaceTabAccessRequest = {
+  tabId: number;
+  title: string;
+  url: string;
+  reason: string;
+};
+
+type PendingAiSpaceRequest = {
+  requestId: string;
+  request: AiSpaceTabAccessRequest;
+};
+
 function parseToolMessageContent(content: string) {
   if (!content.startsWith(TOOL_MESSAGE_PREFIX)) return null;
   try {
@@ -211,6 +223,10 @@ function formatChatHistoryForClipboard(messages: Message[]) {
     .join('\n\n');
 }
 
+function getTabDisplayName(tab: chrome.tabs.Tab) {
+  return tab.title || tab.url || 'Current tab';
+}
+
 const SidePanel = () => {
   const progressMessage = 'Showing progress...';
   const [messages, setMessages] = useState<Message[]>([]);
@@ -227,6 +243,9 @@ const SidePanel = () => {
   const [replayEnabled, setReplayEnabled] = useState(false);
   const [autoFollowMessages, setAutoFollowMessages] = useState(true);
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
+  const [currentTabTitle, setCurrentTabTitle] = useState('');
+  const [pendingAiSpaceRequest, setPendingAiSpaceRequest] = useState<PendingAiSpaceRequest | null>(null);
+  const [aiSpaceDecisionMode, setAiSpaceDecisionMode] = useState<'once' | 'alwaysAllow' | 'alwaysDeny'>('once');
   const sessionIdRef = useRef<string | null>(null);
   const portRef = useRef<chrome.runtime.Port | null>(null);
   const heartbeatIntervalRef = useRef<number | null>(null);
@@ -238,6 +257,7 @@ const SidePanel = () => {
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<number | null>(null);
   const persistMessagesQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const workingTabIdRef = useRef<number | null>(null);
 
   // Check if providers are configured. The model itself is selected from the side panel.
   const checkModelConfiguration = useCallback(async () => {
@@ -266,6 +286,22 @@ const SidePanel = () => {
     checkModelConfiguration();
     loadGeneralSettings();
   }, [checkModelConfiguration, loadGeneralSettings]);
+
+  useEffect(() => {
+    const onUpdated = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => {
+      if (
+        tabId === workingTabIdRef.current &&
+        (changeInfo.title || changeInfo.url || changeInfo.status === 'complete')
+      ) {
+        setCurrentTabTitle(getTabDisplayName(tab));
+      }
+    };
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    return () => {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+    };
+  }, []);
 
   // Re-check model configuration when the side panel becomes visible again
   useEffect(() => {
@@ -469,6 +505,12 @@ const SidePanel = () => {
     return true;
   }, []);
 
+  const setWorkingTab = useCallback(async (tabId: number) => {
+    const tab = await chrome.tabs.get(tabId);
+    workingTabIdRef.current = tabId;
+    setCurrentTabTitle(getTabDisplayName(tab));
+  }, []);
+
   const handleTaskState = useCallback(
     (event: AgentEvent) => {
       const { actor, state, timestamp, data } = event;
@@ -554,6 +596,17 @@ const SidePanel = () => {
               break;
             case ExecutionState.ACT_START:
               if (content !== 'cache_content' && content !== 'done') {
+                const parsed = parseToolDetails(content);
+                const tabId =
+                  parsed?.name === 'switch_tab' &&
+                  parsed.input &&
+                  typeof parsed.input === 'object' &&
+                  typeof (parsed.input as { tab_id?: unknown }).tab_id === 'number'
+                    ? (parsed.input as { tab_id: number }).tab_id
+                    : null;
+                if (tabId !== null) {
+                  void setWorkingTab(tabId);
+                }
                 const toolMessage = createToolMessageContent(state, content);
                 if (toolMessage) {
                   appendMessage({
@@ -637,7 +690,7 @@ const SidePanel = () => {
         });
       }
     },
-    [appendMessage, appendReasoningDelta, appendStreamDelta, finalizeStreamingMessage],
+    [appendMessage, appendReasoningDelta, appendStreamDelta, finalizeStreamingMessage, setWorkingTab],
   );
 
   // Stop heartbeat and close connection
@@ -692,6 +745,12 @@ const SidePanel = () => {
           setIsProcessingSpeech(false);
         } else if (message && message.type === 'heartbeat_ack') {
           console.log('Heartbeat acknowledged');
+        } else if (message && message.type === 'ai_space_tab_access_request') {
+          setPendingAiSpaceRequest({
+            requestId: message.requestId,
+            request: message.request,
+          });
+          setAiSpaceDecisionMode('once');
         }
       });
 
@@ -784,6 +843,7 @@ const SidePanel = () => {
       if (!tabId) {
         throw new Error('No active tab found');
       }
+      await setWorkingTab(tabId);
 
       // Clear messages if we're in a historical session
       if (isHistoricalSession) {
@@ -942,6 +1002,7 @@ const SidePanel = () => {
       if (!tabId) {
         throw new Error('No active tab found');
       }
+      await setWorkingTab(tabId);
 
       setInputEnabled(false);
       setShowStopButton(true);
@@ -1032,6 +1093,8 @@ const SidePanel = () => {
     setMessages([]);
     setCurrentSessionId(null);
     sessionIdRef.current = null;
+    workingTabIdRef.current = null;
+    setCurrentTabTitle('');
     setInputEnabled(true);
     setShowStopButton(false);
     setIsFollowUpMode(false);
@@ -1058,6 +1121,24 @@ const SidePanel = () => {
     }
   };
 
+  const respondToAiSpaceRequest = async (approved: boolean) => {
+    if (!pendingAiSpaceRequest) return;
+
+    const remember = aiSpaceDecisionMode === 'once' ? undefined : aiSpaceDecisionMode;
+    if (remember) {
+      await generalSettingsStore.updateSettings({ aiSpaceTabAccess: remember });
+    }
+
+    portRef.current?.postMessage({
+      type: 'ai_space_tab_access_response',
+      requestId: pendingAiSpaceRequest.requestId,
+      approved: aiSpaceDecisionMode === 'alwaysDeny' ? false : approved,
+      remember,
+    });
+    setPendingAiSpaceRequest(null);
+    setAiSpaceDecisionMode('once');
+  };
+
   const loadChatSessions = useCallback(async () => {
     try {
       const sessions = await chatHistoryStore.getSessionsMetadata();
@@ -1079,6 +1160,8 @@ const SidePanel = () => {
       setMessages([]);
       setIsFollowUpMode(false);
       setIsHistoricalSession(false);
+      workingTabIdRef.current = null;
+      setCurrentTabTitle('');
     }
   };
 
@@ -1090,6 +1173,8 @@ const SidePanel = () => {
         setMessages(fullSession.messages);
         setIsFollowUpMode(false);
         setIsHistoricalSession(true); // Mark this as a historical session
+        workingTabIdRef.current = null;
+        setCurrentTabTitle('');
         console.log('history session selected', sessionId);
       }
       setShowHistory(false);
@@ -1465,10 +1550,6 @@ const SidePanel = () => {
                           Tool calls and page actions will appear as structured run cards.
                         </p>
                       </div>
-                      <div className="mb-3 flex items-center justify-between px-1">
-                        <span className="text-xs font-medium uppercase text-zinc-500">Model</span>
-                        <ModelSelector onModelConfigured={checkModelConfiguration} />
-                      </div>
                       <ChatInput
                         onSendMessage={handleSendMessage}
                         onStopTask={handleStopTask}
@@ -1482,6 +1563,8 @@ const SidePanel = () => {
                         }}
                         historicalSessionId={isHistoricalSession && replayEnabled ? currentSessionId : null}
                         onReplay={handleReplay}
+                        currentTabTitle={currentTabTitle}
+                        modelSelector={<ModelSelector onModelConfigured={checkModelConfiguration} />}
                       />
                     </div>
                   </div>
@@ -1510,10 +1593,6 @@ const SidePanel = () => {
                 )}
                 {messages.length > 0 && (
                   <div className="composer-dock border-t border-zinc-800 bg-bma-bg-soft p-3">
-                    <div className="mb-2 flex items-center justify-between px-1">
-                      <span className="text-xs font-medium uppercase text-zinc-500">Model</span>
-                      <ModelSelector onModelConfigured={checkModelConfiguration} />
-                    </div>
                     <ChatInput
                       onSendMessage={handleSendMessage}
                       onStopTask={handleStopTask}
@@ -1527,12 +1606,57 @@ const SidePanel = () => {
                       }}
                       historicalSessionId={isHistoricalSession && replayEnabled ? currentSessionId : null}
                       onReplay={handleReplay}
+                      currentTabTitle={currentTabTitle}
+                      modelSelector={<ModelSelector onModelConfigured={checkModelConfiguration} />}
                     />
                   </div>
                 )}
               </>
             )}
           </>
+        )}
+        {pendingAiSpaceRequest && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-sm rounded-lg border border-zinc-700 bg-[#111113] p-4 shadow-2xl shadow-black/40">
+              <div className="mb-3">
+                <h2 className="text-base font-semibold text-zinc-100">Allow tab access?</h2>
+                <p className="mt-1 text-sm text-zinc-400">
+                  The agent wants to use a tab outside AI Space. Approving will move it into AI Space.
+                </p>
+              </div>
+              <div className="mb-4 rounded-md border border-zinc-800 bg-zinc-950 p-3">
+                <p className="truncate text-sm font-medium text-zinc-200">{pendingAiSpaceRequest.request.title}</p>
+                <p className="mt-1 break-all text-xs text-zinc-500">{pendingAiSpaceRequest.request.url}</p>
+                <p className="mt-2 text-xs text-zinc-400">{pendingAiSpaceRequest.request.reason}</p>
+              </div>
+              <label htmlFor="ai-space-decision" className="mb-1 block text-xs font-medium text-zinc-400">
+                Decision
+              </label>
+              <select
+                id="ai-space-decision"
+                value={aiSpaceDecisionMode}
+                onChange={event => setAiSpaceDecisionMode(event.target.value as 'once' | 'alwaysAllow' | 'alwaysDeny')}
+                className="mb-4 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                <option value="once">Only this time</option>
+                <option value="alwaysAllow">Always approve</option>
+                <option value="alwaysDeny">Always deny</option>
+              </select>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => respondToAiSpaceRequest(false)}
+                  className="rounded-md border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-white/[0.06]">
+                  Deny
+                </button>
+                <button
+                  type="button"
+                  onClick={() => respondToAiSpaceRequest(true)}
+                  className="rounded-md bg-orange-300 px-3 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-orange-200">
+                  Approve
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

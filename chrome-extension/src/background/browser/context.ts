@@ -14,11 +14,26 @@ const logger = createLogger('BrowserContext');
 const AI_SPACE_GROUP_TITLE = 'AI Space';
 const AI_SPACE_GROUP_COLOR = chrome.tabGroups.Color.BLUE;
 
+export interface AiSpaceTabAccessRequest {
+  tabId: number;
+  title: string;
+  url: string;
+  reason: string;
+}
+
+export interface AiSpaceTabAccessDecision {
+  approved: boolean;
+  remember?: 'alwaysAllow' | 'alwaysDeny';
+}
+
 export default class BrowserContext {
   private _config: BrowserContextConfig;
   private _currentTabId: number | null = null;
   private _attachedPages: Map<number, Page> = new Map();
   private _aiSpaceGroupId: number | null = null;
+  private _tabAccessPolicy: 'ask' | 'alwaysAllow' | 'alwaysDeny' = 'ask';
+  private _tabAccessRequestHandler: ((request: AiSpaceTabAccessRequest) => Promise<AiSpaceTabAccessDecision>) | null =
+    null;
 
   constructor(config: Partial<BrowserContextConfig>) {
     this._config = { ...DEFAULT_BROWSER_CONTEXT_CONFIG, ...config };
@@ -37,12 +52,60 @@ export default class BrowserContext {
     this._currentTabId = tabId;
   }
 
+  public updateTabAccessPolicy(policy: 'ask' | 'alwaysAllow' | 'alwaysDeny'): void {
+    this._tabAccessPolicy = policy;
+  }
+
+  public setTabAccessRequestHandler(
+    handler: ((request: AiSpaceTabAccessRequest) => Promise<AiSpaceTabAccessDecision>) | null,
+  ): void {
+    this._tabAccessRequestHandler = handler;
+  }
+
   public async ensureAiSpace(tabId: number): Promise<number> {
     const tab = await chrome.tabs.get(tabId);
     const groupId = await this.getOrCreateAiSpaceGroup(tab);
     await this.addTabsToAiSpace([tabId], groupId);
     this._currentTabId = tabId;
     return groupId;
+  }
+
+  public async requestTabAccess(tabId: number, reason: string): Promise<boolean> {
+    const tab = await chrome.tabs.get(tabId);
+    if (this._aiSpaceGroupId !== null && tab.groupId === this._aiSpaceGroupId) {
+      return true;
+    }
+
+    if (this._tabAccessPolicy === 'alwaysAllow') {
+      await this.ensureAiSpace(tabId);
+      return true;
+    }
+
+    if (this._tabAccessPolicy === 'alwaysDeny') {
+      return false;
+    }
+
+    if (!this._tabAccessRequestHandler) {
+      return false;
+    }
+
+    const decision = await this._tabAccessRequestHandler({
+      tabId,
+      title: tab.title || 'Untitled tab',
+      url: tab.url || '',
+      reason,
+    });
+
+    if (decision.remember) {
+      this._tabAccessPolicy = decision.remember;
+    }
+
+    if (!decision.approved) {
+      return false;
+    }
+
+    await this.ensureAiSpace(tabId);
+    return true;
   }
 
   private async getOrCreateAiSpaceGroup(tab?: chrome.tabs.Tab): Promise<number> {
@@ -293,7 +356,10 @@ export default class BrowserContext {
 
   public async switchTab(tabId: number): Promise<Page> {
     logger.info('switchTab', tabId);
-    await this.assertTabInAiSpace(tabId);
+    const approved = await this.requestTabAccess(tabId, 'The agent wants to switch to this tab.');
+    if (!approved) {
+      throw new Error('User denied access to tab outside AI Space');
+    }
 
     await chrome.tabs.update(tabId, { active: true });
     await this.waitForTabEvents(tabId, { waitForUpdate: false });

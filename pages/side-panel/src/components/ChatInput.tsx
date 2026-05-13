@@ -17,6 +17,8 @@ interface ChatInputProps {
   // Historical session ID - if provided, shows replay button instead of send button
   historicalSessionId?: string | null;
   onReplay?: (sessionId: string) => void;
+  currentTabTitle?: string;
+  modelSelector?: React.ReactNode;
 }
 
 // File attachment interface
@@ -37,6 +39,8 @@ export default function ChatInput({
   setContent,
   historicalSessionId,
   onReplay,
+  currentTabTitle,
+  modelSelector,
 }: ChatInputProps) {
   const [text, setText] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
@@ -180,6 +184,13 @@ export default function ChatInput({
           </div>
         )}
 
+        {currentTabTitle && (
+          <div className="border-b border-zinc-800 px-3 pb-2 text-xs text-zinc-500">
+            <span className="font-medium text-zinc-400">Working in</span>{' '}
+            <span className="text-zinc-300">{currentTabTitle}</span>
+          </div>
+        )}
+
         <PromptInputTextarea
           aria-disabled={disabled}
           className="px-3 py-2 text-zinc-100 placeholder:text-zinc-600"
@@ -260,14 +271,18 @@ export default function ChatInput({
               {t('chat_buttons_replay')}
             </button>
           ) : (
-            <button
-              type="submit"
-              disabled={isSendButtonDisabled}
-              aria-disabled={isSendButtonDisabled}
-              className={`inline-flex items-center gap-2 rounded-md bg-orange-300 px-3.5 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:enabled:bg-orange-200 ${isSendButtonDisabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}>
-              <FiSend className="size-4" />
-              <span>{t('chat_buttons_send')}</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {modelSelector}
+              <button
+                type="submit"
+                disabled={isSendButtonDisabled}
+                aria-disabled={isSendButtonDisabled}
+                aria-label={t('chat_buttons_send')}
+                title={t('chat_buttons_send')}
+                className={`inline-grid size-9 place-items-center rounded-md bg-orange-300 text-zinc-950 transition-colors hover:enabled:bg-orange-200 ${isSendButtonDisabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}>
+                <FiSend className="size-4" />
+              </button>
+            </div>
           )}
         </div>
       </PromptInput>

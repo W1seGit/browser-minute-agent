@@ -14,12 +14,20 @@ import { ExecutionState } from './agent/event/types';
 import { DEFAULT_AGENT_OPTIONS } from './agent/types';
 import { SpeechToTextService } from './services/speechToText';
 import { injectBuildDomTreeScripts } from './browser/dom/service';
+import type { AiSpaceTabAccessDecision, AiSpaceTabAccessRequest } from './browser/context';
 
 const logger = createLogger('background');
 
 const browserContext = new BrowserContext({});
 let currentExecutor: PiExecutor | null = null;
 let currentPort: chrome.runtime.Port | null = null;
+const pendingTabAccessRequests = new Map<
+  string,
+  {
+    resolve: (decision: AiSpaceTabAccessDecision) => void;
+    timeout: ReturnType<typeof setTimeout>;
+  }
+>();
 const SIDE_PANEL_URL = chrome.runtime.getURL('side-panel/index.html');
 
 // Setup side panel behavior
@@ -70,6 +78,7 @@ chrome.runtime.onConnect.addListener(port => {
     }
 
     currentPort = port;
+    browserContext.setTabAccessRequestHandler(requestAiSpaceTabAccess);
 
     port.onMessage.addListener(async message => {
       try {
@@ -78,6 +87,18 @@ chrome.runtime.onConnect.addListener(port => {
             // Acknowledge heartbeat
             port.postMessage({ type: 'heartbeat_ack' });
             break;
+
+          case 'ai_space_tab_access_response': {
+            const pending = pendingTabAccessRequests.get(message.requestId);
+            if (!pending) break;
+            clearTimeout(pending.timeout);
+            pendingTabAccessRequests.delete(message.requestId);
+            pending.resolve({
+              approved: Boolean(message.approved),
+              remember: message.remember,
+            });
+            break;
+          }
 
           case 'new_task': {
             if (!message.task) return port.postMessage({ type: 'error', error: t('bg_cmd_newTask_noTask') });
@@ -247,10 +268,46 @@ chrome.runtime.onConnect.addListener(port => {
       // this event is also triggered when the side panel is closed, so we need to cancel the task
       console.log('Side panel disconnected');
       currentPort = null;
+      browserContext.setTabAccessRequestHandler(null);
+      for (const [requestId, pending] of pendingTabAccessRequests) {
+        clearTimeout(pending.timeout);
+        pending.resolve({ approved: false });
+        pendingTabAccessRequests.delete(requestId);
+      }
       currentExecutor?.cancel();
     });
   }
 });
+
+async function requestAiSpaceTabAccess(request: AiSpaceTabAccessRequest): Promise<AiSpaceTabAccessDecision> {
+  const generalSettings = await generalSettingsStore.getSettings();
+  browserContext.updateTabAccessPolicy(generalSettings.aiSpaceTabAccess);
+
+  if (generalSettings.aiSpaceTabAccess === 'alwaysAllow') {
+    return { approved: true };
+  }
+  if (generalSettings.aiSpaceTabAccess === 'alwaysDeny') {
+    return { approved: false };
+  }
+  if (!currentPort) {
+    return { approved: false };
+  }
+
+  const requestId = crypto.randomUUID();
+  currentPort.postMessage({
+    type: 'ai_space_tab_access_request',
+    requestId,
+    request,
+  });
+
+  return new Promise(resolve => {
+    const timeout = setTimeout(() => {
+      pendingTabAccessRequests.delete(requestId);
+      resolve({ approved: false });
+    }, 60_000);
+    pendingTabAccessRequests.set(requestId, { resolve, timeout });
+  });
+}
 
 async function setupExecutor(taskId: string, task: string, browserContext: BrowserContext) {
   const providers = await llmProviderStore.getAllProviders();
@@ -291,6 +348,7 @@ async function setupExecutor(taskId: string, task: string, browserContext: Brows
   }
 
   const generalSettings = await generalSettingsStore.getSettings();
+  browserContext.updateTabAccessPolicy(generalSettings.aiSpaceTabAccess);
   browserContext.updateConfig({
     minimumWaitPageLoadTime: generalSettings.minWaitPageLoad / 1000.0,
     displayHighlights: generalSettings.displayHighlights,
