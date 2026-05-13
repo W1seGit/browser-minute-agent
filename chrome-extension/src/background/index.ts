@@ -11,8 +11,6 @@ import BrowserContext from './browser/context';
 import { PiExecutor } from './agent/pi/executor';
 import { createLogger } from './log';
 import { ExecutionState } from './agent/event/types';
-// LangChain model creation removed - using Pi SDK instead
-// import { createChatModel } from './agent/helper';
 import { DEFAULT_AGENT_OPTIONS } from './agent/types';
 import { SpeechToTextService } from './services/speechToText';
 import { injectBuildDomTreeScripts } from './browser/dom/service';

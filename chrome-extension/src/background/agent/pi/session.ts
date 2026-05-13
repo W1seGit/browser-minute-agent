@@ -12,11 +12,11 @@ import type { ProviderConfig, ModelConfig } from '@extension/storage';
 import { getProviderTypeByProviderId, ProviderTypeEnum } from '@extension/storage';
 import { createLogger } from '@src/background/log';
 import { createBrowserTools, type PiToolContext } from './tools';
+import { createPiSystemPrompt } from './prompt';
 import type BrowserContext from '../../browser/context';
 import { AgentContext, DEFAULT_AGENT_OPTIONS, type AgentOptions } from '../types';
 import { EventManager } from '../event/manager';
 import { ExecutionState, Actors } from '../event/types';
-import { NavigatorPrompt } from '../prompts/navigator';
 import MessageManager from '../messages/service';
 
 const logger = createLogger('PiSession');
@@ -257,10 +257,7 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
 
   const context = new AgentContext(taskId, browserContext, messageManager, eventManager, agentOptions || {});
 
-  const navigatorPrompt = new NavigatorPrompt(
-    agentOptions?.maxActionsPerStep ?? DEFAULT_AGENT_OPTIONS.maxActionsPerStep,
-  );
-  const systemPrompt = navigatorPrompt.getSystemMessage().content as string;
+  const systemPrompt = createPiSystemPrompt(agentOptions?.maxActionsPerStep ?? DEFAULT_AGENT_OPTIONS.maxActionsPerStep);
 
   const useVision = agentOptions?.useVision ?? DEFAULT_AGENT_OPTIONS.useVision;
   const piStreamOptions = createPiStreamOptions(providerConfig, modelConfig);
@@ -379,11 +376,7 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
         } else if (ame.type === 'text_delta') {
           lastText += ame.delta;
           await context.emitEvent(Actors.NAVIGATOR, ExecutionState.STREAM_TEXT, ame.delta);
-        } else if (
-          ame.type === 'toolcall_start' ||
-          ame.type === 'toolcall_delta' ||
-          ame.type === 'toolcall_end'
-        ) {
+        } else if (ame.type === 'toolcall_start' || ame.type === 'toolcall_delta' || ame.type === 'toolcall_end') {
           const toolCall = extractToolCallFromAssistantEvent(ame);
           if (toolCall) {
             await context.emitEvent(

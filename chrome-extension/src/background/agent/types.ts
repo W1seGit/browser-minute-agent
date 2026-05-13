@@ -1,11 +1,9 @@
-import { z } from 'zod';
 import type BrowserContext from '../browser/context';
 import { DEFAULT_INCLUDE_ATTRIBUTES } from '../browser/dom/views';
 import type { DOMHistoryElement } from '../browser/dom/history/view';
 import type MessageManager from './messages/service';
 import type { EventManager } from './event/manager';
 import { type Actors, type ExecutionState, AgentEvent } from './event/types';
-import { AgentStepHistory } from './history';
 
 export interface AgentOptions {
   maxSteps: number;
@@ -43,7 +41,6 @@ export class AgentContext {
   stepInfo: AgentStepInfo | null;
   actionResults: ActionResult[];
   stateMessageAdded: boolean;
-  history: AgentStepHistory;
   finalAnswer: string | null;
 
   constructor(
@@ -67,7 +64,6 @@ export class AgentContext {
     this.stepInfo = null;
     this.actionResults = [];
     this.stateMessageAdded = false;
-    this.history = new AgentStepHistory();
     this.finalAnswer = null;
   }
 
@@ -126,51 +122,3 @@ export class ActionResult {
 export type WrappedActionResult = ActionResult & {
   toolCallId: string;
 };
-
-export class StepMetadata {
-  stepStartTime: number;
-  stepEndTime: number;
-  inputTokens: number;
-  stepNumber: number;
-
-  constructor(stepStartTime: number, stepEndTime: number, inputTokens: number, stepNumber: number) {
-    this.stepStartTime = stepStartTime;
-    this.stepEndTime = stepEndTime;
-    this.inputTokens = inputTokens;
-    this.stepNumber = stepNumber;
-  }
-
-  /**
-   * Calculate step duration in seconds
-   */
-  get durationSeconds(): number {
-    return this.stepEndTime - this.stepStartTime;
-  }
-}
-
-export const agentBrainSchema = z
-  .object({
-    evaluation_previous_goal: z.string(),
-    memory: z.string(),
-    next_goal: z.string(),
-  })
-  .describe('Current state of the agent');
-
-export type AgentBrain = z.infer<typeof agentBrainSchema>;
-
-// Make AgentOutput generic with Zod schema
-export interface AgentOutput<T = unknown> {
-  /**
-   * The unique identifier for the agent
-   */
-  id: string;
-
-  /**
-   * The result of the agent's step
-   */
-  result?: T;
-  /**
-   * The error that occurred during the agent's action
-   */
-  error?: string;
-}
