@@ -240,6 +240,9 @@ export default class BrowserContext {
           activeTab = newTab;
         }
       } else {
+        if (this._aiSpaceGroupId === null) {
+          await this.ensureAiSpace(tab.id);
+        }
         activeTab = tab;
       }
       logger.info('active tab', activeTab.id, activeTab.url, activeTab.title);

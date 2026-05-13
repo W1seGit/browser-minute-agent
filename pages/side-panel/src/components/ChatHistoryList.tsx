@@ -95,7 +95,7 @@ const ChatHistoryList: React.FC<ChatHistoryListProps> = ({
                               e.stopPropagation();
                               onSessionBookmark(session.id);
                             }}
-                            className="absolute right-10 top-3 grid size-8 cursor-pointer place-items-center rounded-md border border-transparent text-zinc-500 opacity-0 transition-colors hover:border-orange-300/30 hover:bg-orange-300/10 hover:text-orange-300 group-hover:opacity-100"
+                            className="absolute right-10 top-3 grid size-8 cursor-pointer place-items-center rounded-md border border-transparent text-zinc-500 opacity-0 transition-colors hover:border-orange-300/30 hover:bg-orange-300/10 hover:text-orange-300 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-orange-300/50 focus-visible:opacity-100 group-hover:opacity-100"
                             aria-label={t('chat_history_bookmark')}
                             title={t('chat_history_bookmark')}
                             type="button">
@@ -108,7 +108,7 @@ const ChatHistoryList: React.FC<ChatHistoryListProps> = ({
                             e.stopPropagation();
                             onSessionDelete(session.id);
                           }}
-                          className="absolute right-2 top-3 grid size-8 cursor-pointer place-items-center rounded-md border border-transparent text-zinc-500 opacity-0 transition-colors hover:border-rose-400/30 hover:bg-rose-400/10 hover:text-rose-300 group-hover:opacity-100"
+                          className="absolute right-2 top-3 grid size-8 cursor-pointer place-items-center rounded-md border border-transparent text-zinc-500 opacity-0 transition-colors hover:border-rose-400/30 hover:bg-rose-400/10 hover:text-rose-300 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-rose-300/50 focus-visible:opacity-100 group-hover:opacity-100"
                           aria-label={t('chat_history_delete')}
                           title={t('chat_history_delete')}
                           type="button">
@@ -128,7 +128,7 @@ const ChatHistoryList: React.FC<ChatHistoryListProps> = ({
 };
 
 function getSessionTimestamp(session: ChatSession) {
-  return session.createdAt || session.updatedAt || Date.now();
+  return session.updatedAt || session.createdAt || Date.now();
 }
 
 function groupSessionsByDate(sessions: ChatSession[]) {

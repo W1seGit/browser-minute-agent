@@ -127,9 +127,9 @@ export class PiExecutor {
   async replayHistory(_historySessionId: string): Promise<{ success: boolean; result: string }> {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     void _historySessionId;
-    // TODO: Implement history replay for Pi agent
-    logger.warning('replayHistory is not yet implemented for Pi agent');
-    return { success: false, result: 'replayHistory not implemented for Pi agent' };
+    const error = new Error('replayHistory not implemented for Pi agent');
+    logger.error(error.message);
+    throw error;
   }
 
   async cleanup(): Promise<void> {

@@ -12,7 +12,7 @@ type TabTypes = 'general' | 'models' | 'firewall';
 
 const TABS: { id: TabTypes; icon: ComponentType<{ className?: string }>; label: string }[] = [
   { id: 'general', icon: FiSettings, label: t('options_tabs_general') },
-  { id: 'models', icon: FiCpu, label: 'Providers' },
+  { id: 'models', icon: FiCpu, label: t('options_tabs_models') },
   { id: 'firewall', icon: FiShield, label: t('options_tabs_firewall') },
 ];
 
@@ -28,7 +28,7 @@ const Options = () => {
       case 'general':
         return <GeneralSettings isDarkMode={true} />;
       case 'models':
-        return <ModelSettings isDarkMode={true} />;
+        return <ModelSettings />;
       case 'firewall':
         return <FirewallSettings isDarkMode={true} />;
       default:

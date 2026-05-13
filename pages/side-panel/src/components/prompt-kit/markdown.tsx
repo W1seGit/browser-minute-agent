@@ -70,7 +70,7 @@ const MemoizedMarkdownBlock = memo(
       </ReactMarkdown>
     );
   },
-  (prevProps, nextProps) => prevProps.content === nextProps.content,
+  (prevProps, nextProps) => prevProps.content === nextProps.content && prevProps.components === nextProps.components,
 );
 
 MemoizedMarkdownBlock.displayName = 'MemoizedMarkdownBlock';

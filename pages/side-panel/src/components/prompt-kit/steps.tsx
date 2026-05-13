@@ -31,8 +31,19 @@ export type StepsTriggerProps = React.ComponentProps<'button'> & {
   swapIconOnHover?: boolean;
 };
 
-export function StepsTrigger({ children, className, leftIcon, swapIconOnHover = true, ...props }: StepsTriggerProps) {
+export function StepsTrigger({
+  children,
+  className,
+  leftIcon,
+  onClick,
+  swapIconOnHover = true,
+  ...props
+}: StepsTriggerProps) {
   const { open, setOpen } = useContext(StepsContext);
+  const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    setOpen(!open);
+    onClick?.(event);
+  };
 
   return (
     <button
@@ -41,7 +52,7 @@ export function StepsTrigger({ children, className, leftIcon, swapIconOnHover = 
         'group flex w-full cursor-pointer items-center justify-start gap-1 text-sm text-[#8b96a5] transition-colors hover:text-white',
         className,
       )}
-      onClick={() => setOpen(!open)}
+      onClick={handleClick}
       data-state={open ? 'open' : 'closed'}
       {...props}>
       <div className="flex min-w-0 items-center gap-2">

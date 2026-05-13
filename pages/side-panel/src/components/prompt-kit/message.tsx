@@ -38,10 +38,18 @@ export type MessageContentProps = {
 export const MessageContent = ({ children, markdown = false, className, ...props }: MessageContentProps) => {
   const classNames = cn('break-words whitespace-normal rounded-lg px-4 py-3 text-[15px] leading-7', className);
 
+  const markdownContent = typeof children === 'string' || typeof children === 'number' ? String(children) : undefined;
+
   return markdown ? (
-    <Markdown className={classNames} {...props}>
-      {children as string}
-    </Markdown>
+    markdownContent === undefined ? (
+      <div className={classNames} {...props}>
+        {children}
+      </div>
+    ) : (
+      <Markdown className={classNames} {...props}>
+        {markdownContent}
+      </Markdown>
+    )
   ) : (
     <div className={classNames} {...props}>
       {children}

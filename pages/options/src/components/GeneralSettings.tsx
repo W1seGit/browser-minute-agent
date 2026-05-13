@@ -209,14 +209,14 @@ export const GeneralSettings = ({ isDarkMode = false }: GeneralSettingsProps) =>
           <div className="flex items-center justify-between gap-4">
             <div>
               <h3 className={`text-base font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                AI Space tab access
+                {t('options_general_aiSpaceTabAccess')}
               </h3>
               <p className={`text-sm font-normal ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                Choose what happens when the agent tries to use a tab outside AI Space.
+                {t('options_general_aiSpaceTabAccess_desc')}
               </p>
             </div>
             <label htmlFor="aiSpaceTabAccess" className="sr-only">
-              AI Space tab access
+              {t('options_general_aiSpaceTabAccess')}
             </label>
             <select
               id="aiSpaceTabAccess"
@@ -225,9 +225,9 @@ export const GeneralSettings = ({ isDarkMode = false }: GeneralSettingsProps) =>
                 updateSetting('aiSpaceTabAccess', e.target.value as GeneralSettingsConfig['aiSpaceTabAccess'])
               }
               className={`w-40 rounded-md border ${isDarkMode ? 'border-slate-600 bg-slate-700 text-gray-200' : 'border-gray-300 bg-white text-gray-700'} px-3 py-2`}>
-              <option value="ask">Ask every time</option>
-              <option value="alwaysAllow">Always approve</option>
-              <option value="alwaysDeny">Always deny</option>
+              <option value="ask">{t('options_general_aiSpaceTabAccess_ask')}</option>
+              <option value="alwaysAllow">{t('options_general_aiSpaceTabAccess_alwaysAllow')}</option>
+              <option value="alwaysDeny">{t('options_general_aiSpaceTabAccess_alwaysDeny')}</option>
             </select>
           </div>
         </div>

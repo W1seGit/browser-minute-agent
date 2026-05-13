@@ -194,7 +194,7 @@ export function evaluateToolTrace(testCase: BrowserTaskEvalCase, trace: TraceToo
 
   const repeatedCalls = trace.filter((call, index) => {
     const previous = trace[index - 1];
-    return previous?.toolName === call.toolName && JSON.stringify(previous.args) === JSON.stringify(call.args);
+    return previous?.toolName === call.toolName && safeCompareArgs(previous.args, call.args);
   });
   if (repeatedCalls.length > 0) {
     findings.push(`Repeated identical consecutive tool calls: ${repeatedCalls.length}`);
@@ -214,4 +214,12 @@ export function evaluateToolTrace(testCase: BrowserTaskEvalCase, trace: TraceToo
     findings,
     toolCallCount: trace.length,
   };
+}
+
+function safeCompareArgs(a: unknown, b: unknown): boolean {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
 }

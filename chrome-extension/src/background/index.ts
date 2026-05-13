@@ -384,6 +384,7 @@ async function subscribeToExecutorEvents(executor: PiExecutor) {
 
     if (event.state === ExecutionState.TASK_FAIL || event.state === ExecutionState.TASK_CANCEL) {
       await currentExecutor?.cleanup();
+      currentExecutor = null;
     }
   });
 }

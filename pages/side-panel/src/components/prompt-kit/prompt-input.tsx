@@ -123,8 +123,10 @@ export function PromptInputTextarea({
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      if (disabled) return;
       event.preventDefault();
       onSubmit?.();
+      return;
     }
     onKeyDown?.(event);
   };

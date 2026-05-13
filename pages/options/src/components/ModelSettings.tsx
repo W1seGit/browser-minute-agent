@@ -11,10 +11,6 @@ import {
 } from '@extension/storage';
 import { FiCheck, FiCpu, FiEye, FiEyeOff, FiSearch, FiSliders } from 'react-icons/fi';
 
-interface ModelSettingsProps {
-  isDarkMode?: boolean;
-}
-
 type ModelOption = {
   provider: string;
   providerName: string;
@@ -171,6 +167,19 @@ function makeProviderId(type: ProviderTypeEnum, existing: Record<string, Provide
   return type;
 }
 
+function resolveExistingProviderId(
+  type: ProviderTypeEnum,
+  existing: Record<string, ProviderConfig>,
+): string | undefined {
+  if (existing[type]) return type;
+  if (type === ProviderTypeEnum.AzureOpenAI) {
+    return Object.keys(existing).find(
+      key => key === ProviderTypeEnum.AzureOpenAI || key.startsWith(`${ProviderTypeEnum.AzureOpenAI}_`),
+    );
+  }
+  return undefined;
+}
+
 function getModelIds(providerId: string, config: ProviderConfig): string[] {
   if (config.type === ProviderTypeEnum.AzureOpenAI) {
     return config.azureDeploymentNames || [];
@@ -193,7 +202,7 @@ function uniqueOptions(options: ModelOption[]): ModelOption[] {
   });
 }
 
-export const ModelSettings = (_props: ModelSettingsProps) => {
+export const ModelSettings = () => {
   const [providers, setProviders] = useState<Record<string, ProviderConfig>>({});
   const [selectedProviderId, setSelectedProviderId] = useState<string>(ProviderTypeEnum.OpenAI);
   const [catalogSearch, setCatalogSearch] = useState('');
@@ -213,6 +222,13 @@ export const ModelSettings = (_props: ModelSettingsProps) => {
       console.error('Failed to load model settings:', error);
       setStatus('Failed to load settings.');
     });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current = undefined;
+    };
   }, []);
 
   const selectedProvider = providers[selectedProviderId] || getDefaultProviderConfig(selectedProviderId);
@@ -283,7 +299,7 @@ export const ModelSettings = (_props: ModelSettingsProps) => {
   };
 
   const selectProvider = (type: ProviderTypeEnum) => {
-    const providerId = makeProviderId(type, providers);
+    const providerId = resolveExistingProviderId(type, providers) ?? makeProviderId(type, providers);
     setSelectedProviderId(providerId);
     if (!providers[providerId]) {
       const config = getDefaultProviderConfig(type);
@@ -328,6 +344,7 @@ export const ModelSettings = (_props: ModelSettingsProps) => {
           <label className="relative block">
             <FiSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" />
             <input
+              aria-label="Search providers"
               value={catalogSearch}
               onChange={event => setCatalogSearch(event.target.value)}
               placeholder="Search providers"
@@ -343,7 +360,7 @@ export const ModelSettings = (_props: ModelSettingsProps) => {
                 </h3>
                 <div className="space-y-1">
                   {group.providers.map(provider => {
-                    const providerId = makeProviderId(provider, providers);
+                    const providerId = resolveExistingProviderId(provider, providers) ?? provider;
                     const config = providers[providerId] || getDefaultProviderConfig(provider);
                     const configured = isConfigured(config);
                     const selected = selectedProviderId === providerId;

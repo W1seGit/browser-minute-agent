@@ -139,7 +139,8 @@ function normalizeBaseUrl(baseUrl: string | undefined, mapping: PiProviderMappin
   if (!trimmed || !mapping.appendV1BasePath) {
     return trimmed;
   }
-  return trimmed.endsWith('/v1') ? trimmed : `${trimmed.replace(/\/+$/, '')}/v1`;
+  const noTrailing = trimmed.replace(/\/+$/, '');
+  return noTrailing.endsWith('/v1') ? noTrailing : `${noTrailing}/v1`;
 }
 
 function withProviderOverrides(
@@ -244,6 +245,33 @@ function isUnderspecifiedTypingTask(task: string): boolean {
   return /\b(in|into|inside|on)?\s*(the\s+)?(ide|editor|input|field|box|thing|page)\b/.test(normalized);
 }
 
+function getMessageText(message: unknown): string {
+  if (!message || typeof message !== 'object') return '';
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map(part =>
+        part && typeof part === 'object' && 'text' in part ? String((part as { text?: unknown }).text ?? '') : '',
+      )
+      .filter(Boolean)
+      .join('\n');
+  }
+  return '';
+}
+
+function latestUserTaskFromMessages(messages: unknown[], fallback: string): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index] as { role?: unknown };
+    if (message?.role !== 'user') continue;
+    const text = getMessageText(message).trim();
+    if (text && !text.startsWith('Current browser state:')) {
+      return text;
+    }
+  }
+  return fallback;
+}
+
 export async function createPiAgent(options: PiSessionOptions): Promise<PiSession> {
   const { task, taskId, browserContext, providerConfig, modelConfig, agentOptions } = options;
 
@@ -265,7 +293,7 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
   let finalSuccess = true;
   let doneCalled = false;
   let terminalFailure: string | null = null;
-  const underspecifiedTypingTask = isUnderspecifiedTypingTask(task);
+  let latestTask = task;
 
   // Create tools bound to the runtime context
   const toolCtx: PiToolContext = {
@@ -298,7 +326,7 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
       if (context.stopped || signal?.aborted) {
         return { block: true, reason: 'Task cancelled' };
       }
-      if (underspecifiedTypingTask && !['ask_user', 'done'].includes(toolCall.name)) {
+      if (isUnderspecifiedTypingTask(latestTask) && !['ask_user', 'done'].includes(toolCall.name)) {
         return {
           block: true,
           reason: 'The user asked to type into a page, but did not provide the exact text. Ask the user what to type.',
@@ -316,6 +344,9 @@ export async function createPiAgent(options: PiSessionOptions): Promise<PiSessio
   void lastText;
 
   agent.subscribe(async event => {
+    if ('messages' in event && Array.isArray(event.messages)) {
+      latestTask = latestUserTaskFromMessages(event.messages, latestTask);
+    }
     switch (event.type) {
       case 'agent_start':
         await context.emitEvent(Actors.NAVIGATOR, ExecutionState.TASK_START, task);

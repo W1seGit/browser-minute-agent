@@ -488,7 +488,7 @@ const SidePanel = () => {
     [persistMessagesSnapshot],
   );
 
-  const finalizeStreamingMessage = useCallback((actor: Actors, _content: string, _timestamp: number) => {
+  const finalizeStreamingMessage = useCallback((actor: Actors) => {
     const streamedContent = streamingMessageRef.current;
     streamingMessageRef.current = '';
 
@@ -530,7 +530,7 @@ const SidePanel = () => {
               setIsFollowUpMode(true);
               setInputEnabled(true);
               setShowStopButton(false);
-              if (finalizeStreamingMessage(actor, content, timestamp)) return;
+              if (finalizeStreamingMessage(actor)) return;
               skip = !content;
               break;
             case ExecutionState.TASK_FAIL:
@@ -566,7 +566,7 @@ const SidePanel = () => {
               setIsFollowUpMode(true);
               setInputEnabled(true);
               setShowStopButton(false);
-              if (finalizeStreamingMessage(actor, content, timestamp)) return;
+              if (finalizeStreamingMessage(actor)) return;
               skip = !content;
               break;
             case ExecutionState.TASK_FAIL:
@@ -1167,6 +1167,16 @@ const SidePanel = () => {
 
   const handleSessionSelect = async (sessionId: string) => {
     try {
+      if (portRef.current || showStopButton) {
+        try {
+          portRef.current?.postMessage({ type: 'cancel_task' });
+        } catch (error) {
+          console.warn('Failed to cancel live task before loading history:', error);
+        }
+        stopConnection();
+        setInputEnabled(true);
+        setShowStopButton(false);
+      }
       const fullSession = await chatHistoryStore.getSession(sessionId);
       if (fullSession && fullSession.messages.length > 0) {
         setCurrentSessionId(fullSession.id);
@@ -1619,10 +1629,8 @@ const SidePanel = () => {
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
             <div className="w-full max-w-sm rounded-lg border border-zinc-700 bg-[#111113] p-4 shadow-2xl shadow-black/40">
               <div className="mb-3">
-                <h2 className="text-base font-semibold text-zinc-100">Allow tab access?</h2>
-                <p className="mt-1 text-sm text-zinc-400">
-                  The agent wants to use a tab outside AI Space. Approving will move it into AI Space.
-                </p>
+                <h2 className="text-base font-semibold text-zinc-100">{t('aiSpace_access_title')}</h2>
+                <p className="mt-1 text-sm text-zinc-400">{t('aiSpace_access_description')}</p>
               </div>
               <div className="mb-4 rounded-md border border-zinc-800 bg-zinc-950 p-3">
                 <p className="truncate text-sm font-medium text-zinc-200">{pendingAiSpaceRequest.request.title}</p>
@@ -1630,29 +1638,29 @@ const SidePanel = () => {
                 <p className="mt-2 text-xs text-zinc-400">{pendingAiSpaceRequest.request.reason}</p>
               </div>
               <label htmlFor="ai-space-decision" className="mb-1 block text-xs font-medium text-zinc-400">
-                Decision
+                {t('aiSpace_access_decision')}
               </label>
               <select
                 id="ai-space-decision"
                 value={aiSpaceDecisionMode}
                 onChange={event => setAiSpaceDecisionMode(event.target.value as 'once' | 'alwaysAllow' | 'alwaysDeny')}
                 className="mb-4 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
-                <option value="once">Only this time</option>
-                <option value="alwaysAllow">Always approve</option>
-                <option value="alwaysDeny">Always deny</option>
+                <option value="once">{t('aiSpace_access_once')}</option>
+                <option value="alwaysAllow">{t('aiSpace_access_alwaysAllow')}</option>
+                <option value="alwaysDeny">{t('aiSpace_access_alwaysDeny')}</option>
               </select>
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => respondToAiSpaceRequest(false)}
                   className="rounded-md border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-white/[0.06]">
-                  Deny
+                  {t('aiSpace_access_deny')}
                 </button>
                 <button
                   type="button"
                   onClick={() => respondToAiSpaceRequest(true)}
                   className="rounded-md bg-orange-300 px-3 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-orange-200">
-                  Approve
+                  {t('aiSpace_access_approve')}
                 </button>
               </div>
             </div>

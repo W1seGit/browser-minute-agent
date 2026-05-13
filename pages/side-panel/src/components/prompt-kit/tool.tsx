@@ -42,7 +42,7 @@ const stateConfig = {
 export function Tool({ toolPart, defaultOpen = false, className }: ToolProps) {
   const config = stateConfig[toolPart.state as keyof typeof stateConfig] ?? stateConfig['input-available'];
   const StatusIcon = config.icon;
-  const hasDetails = Boolean(toolPart.input || toolPart.output || toolPart.errorText || toolPart.toolCallId);
+  const hasDetails = Boolean(toolPart.input || toolPart.output || toolPart.errorText);
 
   return (
     <details
